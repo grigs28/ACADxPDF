@@ -14,9 +14,24 @@ import time
 from pathlib import Path
 from dataclasses import dataclass, field
 
-# --- Constants ---
-ACCORE = r"C:\Autodesk\AutoCAD 2020\accoreconsole.exe"
-MM = "毫米"  # "毫米" in Chinese AutoCAD
+# --- Load .env ---
+def _load_env():
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                os.environ.setdefault(key.strip(), val.strip())
+
+_load_env()
+
+# --- Constants (from .env with fallbacks) ---
+ACCORE = os.environ.get("ACAD_PATH", r"C:\Autodesk\AutoCAD 2020\accoreconsole.exe")
+MM = os.environ.get("ACAD_UNIT", "毫米")
+DEFAULT_PRINTER = os.environ.get("PRINTER", "DWG To PDF.pc3")
+DEFAULT_PLOT_STYLE = os.environ.get("PLOT_STYLE", "monochrome.ctb")
+DEFAULT_TIMEOUT = int(os.environ.get("TIMEOUT", "180"))
 
 STANDARD_SIZES = {
     "A0": (841, 1189),
@@ -169,7 +184,7 @@ def dwg_to_dxf(dwg_path: str, output_dir: str = None) -> str:
         f.write(scr_content)
 
     cmd = [ACCORE, "/i", dwg_path, "/s", scr_path, "/l", "en-US"]
-    subprocess.run(cmd, capture_output=True, timeout=180)
+    subprocess.run(cmd, capture_output=True, timeout=DEFAULT_TIMEOUT)
 
     try:
         os.remove(scr_path)
@@ -617,14 +632,14 @@ def run_conversion(dwg_path: str, script_content: str, timeout: int = 120) -> bo
 def convert_dwg(
     dwg_path: str,
     output_dir: str = "./output",
-    printer: str = "DWG To PDF.pc3",
-    plot_style: str = "monochrome.ctb",
+    printer: str = None,
+    plot_style: str = None,
     split_borders: bool = True,
     auto_paper_size: bool = True,
     merge_borders: bool = False,
     paper_size: str = None,
     orientation: str = None,
-    timeout: int = 120,
+    timeout: int = None,
 ) -> ConversionResult:
     """Convert a DWG file to PDF with optional border detection and splitting.
 
@@ -643,6 +658,9 @@ def convert_dwg(
     Returns:
         ConversionResult with details.
     """
+    printer = printer or DEFAULT_PRINTER
+    plot_style = plot_style or DEFAULT_PLOT_STYLE
+    timeout = timeout or DEFAULT_TIMEOUT
     start = time.time()
     dwg_path = os.path.abspath(dwg_path)
     os.makedirs(output_dir, exist_ok=True)
@@ -815,9 +833,9 @@ if __name__ == "__main__":
     parser.add_argument("--no-auto-size", action="store_true", help="Don't auto-detect paper size")
     parser.add_argument("--paper", help="Override paper size name")
     parser.add_argument("--orientation", choices=["L", "P"], help="Override orientation")
-    parser.add_argument("--printer", default="DWG To PDF.pc3")
-    parser.add_argument("--style", default="monochrome.ctb")
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--printer", default=DEFAULT_PRINTER)
+    parser.add_argument("--style", default=DEFAULT_PLOT_STYLE)
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     args = parser.parse_args()
 
     if os.path.isdir(args.input):

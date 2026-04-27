@@ -11,9 +11,12 @@ import tempfile
 import zipfile
 from flask import Flask, request, send_file, jsonify
 
-from acad2pdf import convert_dwg
+from acad2pdf import convert_dwg, DEFAULT_TIMEOUT
 
 app = Flask(__name__)
+
+API_HOST = os.environ.get("API_HOST", "0.0.0.0")
+API_PORT = int(os.environ.get("API_PORT", "5000"))
 
 
 @app.route("/convert", methods=["POST"])
@@ -39,7 +42,7 @@ def convert():
             r = convert_dwg(
                 dwg_path, output_dir,
                 split_borders=True, auto_paper_size=True,
-                merge_borders=merge, timeout=180,
+                merge_borders=merge,
             )
             results.append(r.to_dict())
 
@@ -73,4 +76,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host=API_HOST, port=API_PORT)
