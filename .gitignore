@@ -1,0 +1,36 @@
+# Binary / generated files
+*.dwg
+*.dxf
+*.pdf
+*.ctb
+*.pc3
+
+# Test data
+t3/
+input/
+output/
+
+# Temp / logs
+_temp_*
+plot.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Scripts (legacy / one-off test scripts)
+*.scr
+*.ps1
+
+# Secrets
+.env
