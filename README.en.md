@@ -4,7 +4,7 @@ Batch AutoCAD DWG to PDF converter with automatic drawing border detection and p
 
 ## Features
 
-- **Auto Border Detection** — Two strategies: closed rectangle detection (primary) + block name matching (fallback)
+- **Auto Border Detection** — Two strategies: block name matching (primary) + closed rectangle detection (fallback)
 - **Per-border PDF Output** — Each detected border produces a separate PDF using Window mode for precise clipping
 - **Adaptive Paper Size** — Automatically matches standard paper sizes (A0–A4) from border dimensions, supports extended sizes (e.g. A1+0.5, A1+1)
 - **Batch Processing** — Directory batch conversion with stats (total time, PDF count, average time)
@@ -97,10 +97,25 @@ ACADxPDF/
 └── .gitignore
 ```
 
+## Configuration
+
+Copy `.env.example` to `.env` and modify as needed:
+
+```ini
+ACAD_PATH=C:\Autodesk\AutoCAD 2020\accoreconsole.exe
+ACAD_UNIT=毫米
+PRINTER=DWG To PDF.pc3
+PLOT_STYLE=monochrome.ctb
+TIMEOUT=180
+BORDER_KEYWORDS=TK,TUKUANG,BORDER,FRAME,TITLE
+API_HOST=0.0.0.0
+API_PORT=5000
+```
+
 ## Border Detection
 
-1. **Rectangle Detection** (primary) — Scans modelspace and block definitions for closed LWPOLYLINE rectangles, filters by standard paper size short-side match, removes inner contained rectangles
-2. **Block Name Matching** (fallback) — Finds INSERT blocks with names containing TK/BORDER/FRAME keywords, computes bounding boxes as border boundaries
+1. **Block Name Matching** (primary) — Finds INSERT blocks with names containing keywords from `BORDER_KEYWORDS`, computes bounding boxes as border boundaries
+2. **Rectangle Detection** (fallback) — Scans modelspace and block definitions for closed LWPOLYLINE rectangles, filters by standard paper size short-side match, removes inner contained rectangles
 
 ## License
 

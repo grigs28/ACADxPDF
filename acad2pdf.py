@@ -32,6 +32,8 @@ MM = os.environ.get("ACAD_UNIT", "毫米")
 DEFAULT_PRINTER = os.environ.get("PRINTER", "DWG To PDF.pc3")
 DEFAULT_PLOT_STYLE = os.environ.get("PLOT_STYLE", "monochrome.ctb")
 DEFAULT_TIMEOUT = int(os.environ.get("TIMEOUT", "180"))
+BORDER_KEYWORDS = [k.strip() for k in os.environ.get(
+    "BORDER_KEYWORDS", "TK,TUKUANG,BORDER,FRAME,TITLE").split(",")]
 
 STANDARD_SIZES = {
     "A0": (841, 1189),
@@ -40,9 +42,6 @@ STANDARD_SIZES = {
     "A3": (297, 420),
     "A4": (210, 297),
 }
-
-# Block names that indicate a drawing border
-BORDER_KEYWORDS = ["TK", "TUKUANG", "BORDER", "FRAME", "TITLE"]
 
 
 @dataclass
@@ -388,11 +387,11 @@ def detect_rect_borders(dxf_path: str) -> list[Border]:
 
 
 def detect_borders(dxf_path: str, min_border_ratio: float = 0.3) -> list[Border]:
-    """Detect drawing borders. Tries rectangle detection first, falls back to block matching."""
-    borders = detect_rect_borders(dxf_path)
+    """Detect drawing borders. Tries block name matching first, falls back to rectangle detection."""
+    borders = detect_block_borders(dxf_path, min_border_ratio)
     if borders:
         return borders
-    return detect_block_borders(dxf_path, min_border_ratio)
+    return detect_rect_borders(dxf_path)
 
 
 def detect_block_borders(dxf_path: str, min_border_ratio: float = 0.3) -> list[Border]:

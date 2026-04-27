@@ -4,7 +4,7 @@ AutoCAD DWG 批量转 PDF 工具，支持图框自动识别与分页输出。
 
 ## 功能
 
-- **图框自动识别** — 两种检测策略：封闭矩形检测（优先）+ 块名匹配检测（兜底）
+- **图框自动识别** — 两种检测策略：块名匹配检测（优先）+ 封闭矩形检测（兜底）
 - **智能分页** — 每个图框独立输出一张 PDF，使用 Window 模式精确裁剪
 - **纸张自适应** — 根据图框尺寸自动匹配标准纸幅（A0–A4），支持加长幅面（如 A1+0.5、A1+1）
 - **批量处理** — 支持目录批量转换，输出统计（总时间、PDF 数量、平均耗时）
@@ -97,10 +97,25 @@ ACADxPDF/
 └── .gitignore
 ```
 
+## 配置
+
+复制 `.env.example` 为 `.env`，按需修改：
+
+```ini
+ACAD_PATH=C:\Autodesk\AutoCAD 2020\accoreconsole.exe
+ACAD_UNIT=毫米
+PRINTER=DWG To PDF.pc3
+PLOT_STYLE=monochrome.ctb
+TIMEOUT=180
+BORDER_KEYWORDS=TK,TUKUANG,BORDER,FRAME,TITLE
+API_HOST=0.0.0.0
+API_PORT=5000
+```
+
 ## 图框识别原理
 
-1. **矩形检测**（优先）— 扫描模型空间和块定义中的封闭 LWPOLYLINE 矩形，筛选短边匹配标准纸幅的矩形，去除内层包含
-2. **块名匹配**（兜底）— 查找名称含 TK/BORDER/FRAME 等关键字的 INSERT 块，计算其包围盒作为图框边界
+1. **块名匹配**（优先）— 查找名称含 `BORDER_KEYWORDS` 中关键字的 INSERT 块，计算其包围盒作为图框边界
+2. **矩形检测**（兜底）— 扫描模型空间和块定义中的封闭 LWPOLYLINE 矩形，筛选短边匹配标准纸幅的矩形，去除内层包含
 
 ## License
 
