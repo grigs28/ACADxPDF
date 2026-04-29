@@ -56,8 +56,8 @@ results = batch_convert(
 ### API 服务
 
 ```bash
-python api.py
-# 服务启动在 http://0.0.0.0:5000
+python -m acad2pdf.api
+# 服务启动在 http://0.0.0.0:5557
 ```
 
 **上传转换：**
@@ -90,11 +90,20 @@ curl http://localhost:5000/health
 
 ```
 ACADxPDF/
-├── acad2pdf.py        # 核心转换模块（图框识别、PDF 生成、批量处理）
-├── api.py             # Flask API 服务
-├── analyze_dxf.py     # DXF 分析工具
-├── test_api.py        # API 测试脚本
-└── .gitignore
+├── acad2pdf/              # 核心包
+│   ├── __init__.py        # 公共接口导出
+│   ├── converter.py       # 转换核心（图框识别、PDF 生成、批量处理）
+│   └── api.py             # Flask API 服务
+├── tools/                 # 工具脚本
+│   ├── analyze_dxf.py     # DXF 分析工具
+│   └── test_api.py        # API 测试脚本
+├── docs/                  # 文档
+│   ├── API说明文档.md
+│   └── README.en.md
+├── .env.example           # 配置模板
+├── .gitignore
+├── README.md
+└── LICENSE
 ```
 
 ## 配置

@@ -56,8 +56,8 @@ results = batch_convert(
 ### API Server
 
 ```bash
-python api.py
-# Starts at http://0.0.0.0:5000
+python -m acad2pdf.api
+# Starts at http://0.0.0.0:5557
 ```
 
 **Upload & Convert:**
@@ -90,11 +90,20 @@ Example: `01-n-A1.pdf`, `02-n-A1+0.5.pdf`, `03-design_notes-A2.pdf`
 
 ```
 ACADxPDF/
-├── acad2pdf.py        # Core module (border detection, PDF generation, batch processing)
-├── api.py             # Flask API service
-├── analyze_dxf.py     # DXF analysis utility
-├── test_api.py        # API test script
-└── .gitignore
+├── acad2pdf/              # Core package
+│   ├── __init__.py        # Public interface exports
+│   ├── converter.py       # Core module (border detection, PDF generation, batch processing)
+│   └── api.py             # Flask API service
+├── tools/                 # Utility scripts
+│   ├── analyze_dxf.py     # DXF analysis utility
+│   └── test_api.py        # API test script
+├── docs/                  # Documentation
+│   ├── API说明文档.md
+│   └── README.en.md
+├── .env.example           # Config template
+├── .gitignore
+├── README.md
+└── LICENSE
 ```
 
 ## Configuration

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 # --- Load .env ---
 def _load_env():
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).parent.parent / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -767,12 +767,7 @@ def convert_dwg(
         result.error = str(ex)
     finally:
         result.elapsed = time.time() - start
-        # Clean up temp DXF
-        if dxf_path:
-            try:
-                os.remove(dxf_path)
-            except OSError:
-                pass
+        # Clean up any leftover temp PDFs
         # Clean up any leftover temp PDFs
         for f in os.listdir(output_dir):
             if f.startswith("_temp_") and f.endswith(".pdf"):

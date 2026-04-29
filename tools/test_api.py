@@ -1,3 +1,5 @@
+import sys
+sys.path.insert(0, r"C:\opt\ACADxPDF")
 from acad2pdf import convert_dwg, detect_borders, dwg_to_dxf
 import os
 
