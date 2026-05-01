@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACADxPDF — DWG → PDF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0e1a;--surface:#111827;--surface2:#1a2236;--border:#1e2d4a;
+  --cyan:#00e5ff;--cyan2:#00b8d4;--cyan-dim:rgba(0,229,255,.08);
+  --green:#00e676;--red:#ff5252;--amber:#ffc107;
+  --text:#c8d6e5;--text2:#7b8ca8;--text3:#4a5568;
+  --mono:'JetBrains Mono',monospace;--sans:'Noto Sans SC',sans-serif;
+  --radius:6px;--glow:0 0 20px rgba(0,229,255,.12);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* Blueprint grid background */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(0,229,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,229,255,.03) 1px,transparent 1px);
+  background-size:40px 40px;
+}
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse at 20% 0%,rgba(0,229,255,.06) 0%,transparent 60%),
+             radial-gradient(ellipse at 80% 100%,rgba(0,100,200,.04) 0%,transparent 50%);
+}
+
+.wrap{position:relative;z-index:1;max-width:1280px;margin:0 auto;padding:24px}
+
+/* Header */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 24px;margin-bottom:20px;
+  background:linear-gradient(135deg,rgba(17,24,39,.95),rgba(26,34,54,.9));
+  border:1px solid var(--border);border-radius:var(--radius);
+  backdrop-filter:blur(8px);
+}
+.logo{display:flex;align-items:center;gap:14px}
+.logo-icon{
+  width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--cyan),var(--cyan2));
+  border-radius:var(--radius);font-family:var(--mono);font-weight:700;font-size:14px;color:var(--bg);
+  box-shadow:var(--glow);
+}
+.logo h1{font-family:var(--mono);font-size:18px;font-weight:600;letter-spacing:1px;color:#fff}
+.logo h1 span{color:var(--cyan);font-weight:700}
+.hdr-info{display:flex;align-items:center;gap:20px;font-family:var(--mono);font-size:12px;color:var(--text2)}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 2s infinite;margin-right:6px}
+.pulse.off{background:var(--red);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.tag{padding:3px 10px;background:var(--cyan-dim);border:1px solid rgba(0,229,255,.2);border-radius:3px;color:var(--cyan);font-family:var(--mono);font-size:11px;font-weight:500}
+
+/* Grid layout */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.span{grid-column:1/-1}
+
+/* Card */
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;transition:border-color .3s;
+}
+.card:hover{border-color:rgba(0,229,255,.2)}
+.card-hdr{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.card-hdr .ico{
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  background:var(--cyan-dim);border:1px solid rgba(0,229,255,.15);border-radius:4px;
+  font-size:13px;color:var(--cyan);
+}
+.card-hdr h2{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.5px}
+
+/* Upload zone */
+.drop{
+  border:2px dashed var(--border);border-radius:var(--radius);
+  padding:44px 20px;text-align:center;cursor:pointer;
+  transition:all .25s;position:relative;overflow:hidden;
+}
+.drop::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at center,var(--cyan-dim),transparent 70%);
+  opacity:0;transition:opacity .3s;
+}
+.drop:hover,.drop.over{border-color:var(--cyan)}
+.drop:hover::before,.drop.over::before{opacity:1}
+.drop-inner{position:relative;z-index:1}
+.drop .up-ico{font-size:40px;margin-bottom:8px;filter:drop-shadow(0 0 8px rgba(0,229,255,.3))}
+.drop p{color:var(--text2);font-size:13px}
+.drop .hint{color:var(--text3);font-size:11px;margin-top:4px;font-family:var(--mono)}
+
+/* File list */
+.flist{margin-top:10px}
+.fitem{
+  display:flex;align-items:center;padding:7px 12px;margin-top:4px;
+  background:var(--surface2);border:1px solid var(--border);border-radius:4px;
+  font-family:var(--mono);font-size:12px;
+}
+.fitem .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.fitem .sz{color:var(--text3);margin:0 10px;font-size:11px}
+.fitem .rm{color:var(--text3);cursor:pointer;font-size:14px;transition:color .2s}
+.fitem .rm:hover{color:var(--red)}
+.fitem .dwg-tag{color:var(--cyan);font-size:10px;font-family:var(--mono);margin-right:8px;opacity:.6}
+
+/* Config */
+.cfg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cfg label{display:block;font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.cfg input{
+  width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;
+  padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:13px;transition:border-color .2s;
+}
+.cfg input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,229,255,.1)}
+.cfg .wide{grid-column:1/-1}
+.sw-row{display:flex;align-items:center;gap:10px;margin-top:6px}
+.sw{position:relative;width:38px;height:20px;flex-shrink:0}
+.sw input{opacity:0;width:0;height:0}
+.sw .sl{position:absolute;inset:0;background:var(--border);border-radius:10px;cursor:pointer;transition:.25s}
+.sw .sl::before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:var(--text3);border-radius:50%;transition:.25s}
+.sw input:checked+.sl{background:var(--cyan)}
+.sw input:checked+.sl::before{transform:translateX(18px);background:#fff}
+.sw-label{font-family:var(--mono);font-size:12px;color:var(--text2)}
+
+/* Buttons */
+.brow{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap}
+.btn{
+  padding:9px 22px;border:1px solid transparent;border-radius:4px;
+  font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.3px;
+  cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px;
+}
+.btn:disabled{opacity:.3;cursor:not-allowed}
+.btn::first-letter{text-transform:uppercase}
+.bp{background:var(--cyan);color:var(--bg);border-color:var(--cyan)}
+.bp:hover:not(:disabled){background:#00d4f0;box-shadow:var(--glow)}
+.bs{background:transparent;color:var(--text2);border-color:var(--border)}
+.bs:hover:not(:disabled){border-color:var(--text3);color:var(--text)}
+.bg{background:var(--green);color:var(--bg);border-color:var(--green)}
+.bg:hover:not(:disabled){box-shadow:0 0 16px rgba(0,230,118,.3)}
+.bd{background:transparent;color:var(--text3);border-color:var(--border)}
+.bd:hover:not(:disabled){color:var(--red);border-color:var(--red)}
+
+/* Progress */
+.plist{max-height:300px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.pitem{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 14px;margin-bottom:5px;
+  background:var(--surface2);border:1px solid var(--border);border-radius:4px;
+  font-family:var(--mono);font-size:12px;animation:fadeIn .3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.pitem .sp{
+  width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--cyan);
+  border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;margin-top:1px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pitem.ok .sp{border:none;background:var(--green);animation:none;border-radius:50%}
+.pitem.ok .sp::after{content:'✓';color:var(--bg);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;width:16px;height:16px}
+.pitem.err{border-left:3px solid var(--red);border-color:var(--red) var(--border) var(--border) var(--red)}
+.pitem .pname{color:#fff;font-weight:500;margin-bottom:2px}
+.pitem .det{color:var(--text2);font-size:11px}
+.pitem .elapsed{color:var(--text3);font-size:10px;margin-left:auto;white-space:nowrap}
+.sbadge{
+  display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:600;
+  background:rgba(0,229,255,.1);color:var(--cyan);border:1px solid rgba(0,229,255,.15);
+  margin-right:4px;
+}
+
+/* Stats */
+.stats{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px;
+  animation:fadeIn .4s ease;
+}
+@media(max-width:600px){.stats{grid-template-columns:repeat(3,1fr)}}
+.stat{
+  background:var(--surface2);border:1px solid var(--border);border-radius:4px;
+  padding:12px;text-align:center;
+}
+.stat .v{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--cyan)}
+.stat .l{font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+
+/* Logs */
+.lbox{
+  background:var(--bg);border:1px solid var(--border);border-radius:4px;
+  padding:10px 14px;max-height:200px;overflow-y:auto;font-family:var(--mono);font-size:11px;
+  line-height:1.7;white-space:pre-wrap;word-break:break-all;scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.ll{color:var(--text3)}.ll.i{color:var(--text2)}.ll.w{color:var(--amber)}.ll.e{color:var(--red)}
+
+.empty{text-align:center;color:var(--text3);padding:28px;font-size:13px;font-family:var(--mono)}
+
+/* Scrollbars */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">DX</div>
+      <h1>ACAD<span>x</span>PDF</h1>
+    </div>
+    <div class="hdr-info">
+      <span><span class="pulse" id="dot"></span><span id="conn">已连接</span></span>
+      <span class="tag">线程: <strong id="wk">4</strong></span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-hdr"><div class="ico">↑</div><h2>上传文件</h2></div>
+      <div class="drop" id="dz">
+        <div class="drop-inner">
+          <div class="up-ico">⬡</div>
+          <p>拖拽 DWG 文件到此处，或点击选择</p>
+          <p class="hint">支持批量上传 .DWG 文件</p>
+        </div>
+        <input type="file" id="fi" multiple accept=".dwg" style="display:none">
+      </div>
+      <div class="flist" id="fl"></div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-hdr"><div class="ico">⚙</div><h2>参数配置</h2></div>
+      <div class="cfg">
+        <div><label>并发线程数</label><input id="cWk" type="number" min="1" max="16" value="4"></div>
+        <div><label>超时(秒)</label><input id="cTo" type="number" value="180"></div>
+        <div><label>打印机</label><input id="cPr" placeholder="DWG To PDF.pc3"></div>
+        <div><label>打印样式</label><input id="cPs" placeholder="monochrome.ctb"></div>
+        <div class="wide"><label>图框关键词</label><input id="cKw" placeholder="TK,TUKUANG,BORDER,FRAME,TITLE"></div>
+        <div><label>拆分图框</label><div class="sw-row"><label class="sw"><input type="checkbox" id="cSplit" checked><span class="sl"></span></label><span class="sw-label" id="lSplit">开</span></div></div>
+        <div><label>自动纸张</label><div class="sw-row"><label class="sw"><input type="checkbox" id="cAuto" checked><span class="sl"></span></label><span class="sw-label" id="lAuto">开</span></div></div>
+        <div><label>合并图框</label><div class="sw-row"><label class="sw"><input type="checkbox" id="cMerge"><span class="sl"></span></label><span class="sw-label" id="lMerge">关</span></div></div>
+      </div>
+      <div class="brow"><button class="btn bs" id="bCfg">保存配置</button></div>
+    </div>
+
+    <!-- Progress -->
+    <div class="card span">
+      <div class="card-hdr"><div class="ico">▸</div><h2>转换进度</h2><span id="pStatus" style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:auto"></span></div>
+      <div class="plist" id="pl"><div class="empty">等待上传文件</div></div>
+      <div class="stats" id="stats" style="display:none">
+        <div class="stat"><div class="v" id="sTime">—</div><div class="l">总耗时</div></div>
+        <div class="stat"><div class="v" id="sOk">—</div><div class="l">成功</div></div>
+        <div class="stat"><div class="v" id="sPdf">—</div><div class="l">PDF数</div></div>
+        <div class="stat"><div class="v" id="sThr">—</div><div class="l">线程数</div></div>
+        <div class="stat"><div class="v" id="sAvg">—</div><div class="l">平均/文件</div></div>
+      </div>
+      <div class="brow">
+        <button class="btn bp" id="bGo" disabled>▶ 开始转换</button>
+        <button class="btn bg" id="bDl" style="display:none">⬇ 下载 ZIP</button>
+        <button class="btn bd" id="bClr">✕ 清空</button>
+      </div>
+    </div>
+
+    <!-- Logs -->
+    <div class="card span">
+      <div class="card-hdr"><div class="ico">≡</div><h2>日志输出</h2></div>
+      <div class="lbox" id="lb"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+var API=location.origin,files=[],taskId=null,evtSrc=null;
+function $(i){return document.getElementById(i)}
+
+// SSE
+function sse(){
+  if(evtSrc)evtSrc.close();
+  evtSrc=new EventSource(API+'/stream');
+  evtSrc.addEventListener('connected',function(){$('dot').classList.remove('off');$('conn').textContent='已连接'});
+  evtSrc.onerror=function(){$('dot').classList.add('off');$('conn').textContent='已断开'};
+  evtSrc.addEventListener('task_start',function(e){var d=JSON.parse(e.data);$('wk').textContent=d.workers;clearP()});
+  evtSrc.addEventListener('file_start',function(e){var d=JSON.parse(e.data);addP(d.file,'排队中...')});
+  evtSrc.addEventListener('progress',function(e){var d=JSON.parse(e.data);var m={dwg_to_dxf:'DWG→DXF',detect_borders:'检测图框',plot_pdf:'生成PDF'};updP(d.file,m[d.step]||d.step,d)});
+  evtSrc.addEventListener('borders',function(e){var d=JSON.parse(e.data);updP(d.file,'检测到 '+d.count+' 个图框',d)});
+  evtSrc.addEventListener('file_done',function(e){var d=JSON.parse(e.data);if(d.success)setOk(d.file,d);else setErr(d.file,d.error)});
+  evtSrc.addEventListener('task_done',function(e){var d=JSON.parse(e.data);showSt(d);$('bGo').disabled=false});
+}
+
+// Upload
+var dz=$('dz'),fi=$('fi');
+dz.onclick=function(){fi.click()};
+dz.ondragover=function(e){e.preventDefault();dz.classList.add('over')};
+dz.ondragleave=function(){dz.classList.remove('over')};
+dz.ondrop=function(e){e.preventDefault();dz.classList.remove('over');addF(e.dataTransfer.files)};
+fi.onchange=function(){addF(fi.files);fi.value=''};
+
+function addF(fl){
+  for(var i=0;i<fl.length;i++){
+    var f=fl[i];
+    if(f.name.toLowerCase().indexOf('.dwg')!==-1&&!files.find(function(x){return x.name===f.name}))
+      files.push(f);
+  }
+  rFl();$('bGo').disabled=!files.length;
+}
+
+function rFl(){
+  var el=$('fl');el.textContent='';
+  files.forEach(function(f,i){
+    var d=document.createElement('div');d.className='fitem';
+    var tag=document.createElement('span');tag.className='dwg-tag';tag.textContent='.DWG';
+    var nm=document.createElement('span');nm.className='nm';nm.textContent=f.name;
+    var sz=document.createElement('span');sz.className='sz';sz.textContent=(f.size/1024).toFixed(0)+'KB';
+    var rm=document.createElement('span');rm.className='rm';rm.textContent='✕';rm.setAttribute('data-i',i);
+    rm.onclick=function(){files.splice(parseInt(this.getAttribute('data-i')),1);rFl();$('bGo').disabled=!files.length};
+    d.appendChild(tag);d.appendChild(nm);d.appendChild(sz);d.appendChild(rm);el.appendChild(d);
+  });
+}
+
+// Convert
+$('bGo').onclick=function(){
+  if(!files.length)return;
+  $('bGo').disabled=true;$('bDl').style.display='none';$('stats').style.display='none';
+  var form=new FormData();
+  files.forEach(function(f){form.append('files',f)});
+  form.append('merge',$('cMerge').checked);
+  form.append('workers',$('cWk').value);
+  fetch(API+'/convert',{method:'POST',body:form}).then(function(r){return r.json()}).then(function(d){
+    if(d.error){setErr('上传失败',d.error);$('bGo').disabled=false;return}
+    taskId=d.task_id;$('pStatus').textContent='任务 '+taskId.toUpperCase()+' · '+d.workers+' 线程';
+  }).catch(function(e){setErr('请求失败',e.message);$('bGo').disabled=false});
+};
+
+$('bDl').onclick=function(){
+  if(!taskId)return;
+  var a=document.createElement('a');a.href=API+'/download/'+taskId;a.download=taskId+'.zip';a.click();
+};
+
+$('bClr').onclick=function(){
+  files=[];rFl();clearP();$('stats').style.display='none';$('bDl').style.display='none';
+  $('bGo').disabled=true;$('pStatus').textContent='';
+};
+
+// Progress
+function sid(s){return s.replace(/[^a-zA-Z0-9]/g,'_')}
+function clearP(){$('pl').textContent=''}
+function addP(f,txt){
+  var l=$('pl'),e=document.createElement('div');e.className='pitem';e.id='p-'+sid(f);
+  var sp=document.createElement('div');sp.className='sp';
+  var info=document.createElement('div');info.style.flex='1';
+  var nm=document.createElement('div');nm.className='pname';nm.textContent=f;
+  var dt=document.createElement('div');dt.className='det';dt.textContent=txt;
+  var el=document.createElement('div');el.className='elapsed';el.textContent='';
+  info.appendChild(nm);info.appendChild(dt);
+  e.appendChild(sp);e.appendChild(info);e.appendChild(el);
+  l.appendChild(e);l.scrollTop=l.scrollHeight;
+}
+function updP(f,step,data){
+  var e=$('p-'+sid(f));if(!e)return;
+  var dt=e.querySelector('.det');if(dt){dt.textContent='';var b=document.createElement('span');b.className='sbadge';b.textContent=step||'...';dt.appendChild(b);if(data&&data.size_label)dt.appendChild(document.createTextNode(' '+data.size_label))}
+  var el=e.querySelector('.elapsed');
+  if(el&&data&&data.batch_index)el.textContent='['+data.batch_index+'/'+data.batch_total+']';
+}
+function setOk(f,data){
+  var e=$('p-'+sid(f));if(!e)return;e.classList.add('ok');
+  var dt=e.querySelector('.det');if(dt)dt.textContent=data.pdf_count+' 个PDF';
+  var el=e.querySelector('.elapsed');if(el)el.textContent=data.elapsed+'s';
+}
+function setErr(f,err){
+  var e=$('p-'+sid(f));
+  if(!e){e=document.createElement('div');e.className='pitem err';e.id='p-'+sid(f);
+    var sp=document.createElement('div');sp.className='sp';sp.style.cssText='border:none;background:var(--red);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-weight:700';sp.textContent='!';
+    e.appendChild(sp);$('pl').appendChild(e)}
+  e.classList.add('err');
+  var dt=e.querySelector('.det');if(dt)dt.textContent=err||'未知错误';
+}
+
+function showSt(d){
+  $('stats').style.display='grid';
+  $('sTime').textContent=d.total_time+'s';
+  $('sOk').textContent=d.ok_count+'/'+d.total;
+  $('sPdf').textContent=d.total_pdfs;
+  $('sThr').textContent=d.workers;
+  $('sAvg').textContent=d.total>0?(d.total_time/d.total).toFixed(1)+'s':'—';
+  if(d.ok_count>0)$('bDl').style.display='flex';
+}
+
+// Config
+function loadCfg(){
+  fetch(API+'/config').then(function(r){return r.json()}).then(function(c){
+    $('cPr').value=c.printer||'';$('cPs').value=c.plot_style||'';
+    $('cTo').value=c.timeout||180;$('cKw').value=c.border_keywords||'';
+    $('cWk').value=c.max_workers||4;
+    $('cSplit').checked=c.split_borders!==false;
+    $('cAuto').checked=c.auto_paper_size!==false;
+    $('cMerge').checked=c.merge_borders===true;
+    updSw();$('wk').textContent=$('cWk').value;
+  });
+}
+
+$('bCfg').onclick=function(){
+  fetch(API+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    printer:$('cPr').value,plot_style:$('cPs').value,
+    timeout:parseInt($('cTo').value)||180,border_keywords:$('cKw').value,
+    max_workers:parseInt($('cWk').value)||4,
+    split_borders:$('cSplit').checked,auto_paper_size:$('cAuto').checked,merge_borders:$('cMerge').checked
+  })}).then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){$('wk').textContent=$('cWk').value;toast('配置已保存')}});
+};
+
+function updSw(){
+  $('lSplit').textContent=$('cSplit').checked?'开':'关';
+  $('lAuto').textContent=$('cAuto').checked?'开':'关';
+  $('lMerge').textContent=$('cMerge').checked?'开':'关';
+}
+$('cSplit').onchange=updSw;$('cAuto').onchange=updSw;$('cMerge').onchange=updSw;
+
+// Logs
+function loadLogs(){
+  fetch(API+'/logs?lines=200').then(function(r){return r.json()}).then(function(d){
+    var b=$('lb');b.textContent='';
+    for(var i=0;i<d.logs.length;i++){
+      var l=d.logs[i],e=document.createElement('div');e.className='ll';
+      if(l.indexOf('[WARNING]')!==-1)e.className+=' w';
+      else if(l.indexOf('[ERROR]')!==-1)e.className+=' e';
+      else e.className+=' i';
+      e.textContent=l;b.appendChild(e);
+    }
+    b.scrollTop=b.scrollHeight;
+  });
+}
+
+function toast(m){
+  var t=document.createElement('div');
+  t.style.cssText='position:fixed;top:16px;right:16px;background:var(--cyan);color:var(--bg);padding:8px 20px;border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:600;z-index:99;opacity:0;transition:opacity .3s;box-shadow:var(--glow)';
+  t.textContent=m;document.body.appendChild(t);
+  requestAnimationFrame(function(){t.style.opacity='1'});
+  setTimeout(function(){t.style.opacity='0';setTimeout(function(){t.remove()},300)},2000);
+}
+
+sse();loadCfg();loadLogs();setInterval(loadLogs,8000);
+})();
+</script>
+</body>
+</html>

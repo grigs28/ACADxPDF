@@ -8,11 +8,60 @@ Supports custom paper sizes based on detected border dimensions.
 import os
 import sys
 import json
+import re
+import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
+
+
+def _is_wsl() -> bool:
+    """Detect if running under WSL."""
+    try:
+        return "microsoft" in open("/proc/version").read().lower()
+    except Exception:
+        return False
+
+
+_IN_WSL = _is_wsl()
+
+
+def _to_native_path(path: str) -> str:
+    """Convert path to native format for the current environment.
+
+    WSL: /mnt/c/... <-> C:\\...   (accoreconsole.exe needs Windows paths)
+    Windows: pass through unchanged.
+    """
+    if _IN_WSL:
+        # WSL path → Windows path
+        m = re.match(r"^/mnt/([a-zA-Z])(/.*)$", path)
+        if m:
+            drive = m.group(1).upper()
+            rest = m.group(2).replace("/", "\\")
+            return f"{drive}:{rest}"
+        # Already Windows path → keep as-is
+        return path
+    return path
+
+
+def _create_work_dir() -> str:
+    """为 1 个 DWG 创建 1 个独立工作目录（必须在 Windows 文件系统上）。
+
+    多线程时每个 DWG 必须在独立目录中操作，避免临时文件冲突。
+    """
+    if WORK_DIR:
+        base = WORK_DIR
+    else:
+        # 项目目录在 /mnt/c 下，accoreconsole 可直接访问
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_work")
+    os.makedirs(base, exist_ok=True)
+    wd = os.path.join(base, uuid.uuid4().hex[:8])
+    os.makedirs(wd, exist_ok=True)
+    return wd
+
 
 # --- Load .env ---
 def _load_env():
@@ -28,6 +77,9 @@ _load_env()
 
 # --- Constants (from .env with fallbacks) ---
 ACCORE = os.environ.get("ACAD_PATH", r"C:\Autodesk\AutoCAD 2020\accoreconsole.exe")
+# 工作目录：accoreconsole 的临时文件放在这里（必须在 Windows 文件系统上）
+# 项目在 /opt 时，accoreconsole 无法直接访问 Linux 文件系统，需要此目录中转
+WORK_DIR = os.environ.get("WORK_DIR", "")
 MM = os.environ.get("ACAD_UNIT", "毫米")
 DEFAULT_PRINTER = os.environ.get("PRINTER", "DWG To PDF.pc3")
 DEFAULT_PLOT_STYLE = os.environ.get("PLOT_STYLE", "monochrome.ctb")
@@ -165,24 +217,38 @@ class ConversionResult:
         }
 
 
-def dwg_to_dxf(dwg_path: str, output_dir: str = None) -> str:
-    """Convert DWG to DXF using accoreconsole. Always regenerates."""
+def _safe_ascii_copy(src: str, dst_dir: str) -> str:
+    """Copy file to dst_dir with an ASCII-safe name if path contains non-ASCII chars."""
+    try:
+        src.encode('ascii')
+        return src
+    except UnicodeEncodeError:
+        pass
+    import shutil
+    safe_name = f"_input_{uuid.uuid4().hex[:8]}.dwg"
+    dst = os.path.join(dst_dir, safe_name)
+    shutil.copy2(src, dst)
+    return dst
+
+
+def dwg_to_dxf(dwg_path: str, work_dir: str) -> str:
+    """Convert DWG to DXF using accoreconsole. 在指定的 work_dir 中操作。"""
     dwg_path = os.path.abspath(dwg_path)
     if not os.path.exists(ACCORE):
         raise FileNotFoundError(f"accoreconsole.exe not found: {ACCORE}")
 
-    output_dir = output_dir or os.path.dirname(dwg_path)
-    dxf_path = os.path.join(output_dir, f"_temp_{id(dwg_path)}.dxf")
+    os.makedirs(work_dir, exist_ok=True)
 
-    os.makedirs(output_dir, exist_ok=True)
-    dxf_fwd = dxf_path.replace(os.sep, "/")
+    dwg_win = _to_native_path(dwg_path)
+    dxf_file = os.path.join(work_dir, f"_temp_{uuid.uuid4().hex[:6]}.dxf")
+    dxf_win = _to_native_path(dxf_file).replace("\\", "/")
 
-    scr_content = f'(command "_.FILEDIA" "0")\n(command "_.CMDDIA" "0")\n(command "_.SAVEAS" "DXF" "" "{dxf_fwd}")\n(command "_.QUIT" "N")\n'
-    scr_path = os.path.join(tempfile.gettempdir(), f"dwg2dxf.scr")
+    scr_content = f'(command "_.FILEDIA" "0")\n(command "_.CMDDIA" "0")\n(command "_.SAVEAS" "DXF" "" "{dxf_win}")\n(command "_.QUIT" "N")\n'
+    scr_path = os.path.join(work_dir, f"_dwg2dxf_{uuid.uuid4().hex[:6]}.scr")
     with open(scr_path, "w", encoding="utf-8") as f:
         f.write(scr_content)
 
-    cmd = [ACCORE, "/i", dwg_path, "/s", scr_path, "/l", "en-US"]
+    cmd = [ACCORE, "/i", dwg_win, "/s", _to_native_path(scr_path), "/l", "en-US"]
     subprocess.run(cmd, capture_output=True, timeout=DEFAULT_TIMEOUT)
 
     try:
@@ -190,9 +256,9 @@ def dwg_to_dxf(dwg_path: str, output_dir: str = None) -> str:
     except OSError:
         pass
 
-    if not os.path.exists(dxf_path):
-        raise RuntimeError(f"DXF not created: {dxf_path}")
-    return dxf_path
+    if not os.path.exists(dxf_file):
+        raise RuntimeError(f"DXF not created: {dxf_file}")
+    return dxf_file
 
 
 def _is_rect(pts: list, tol: float = 1.0) -> bool:
@@ -583,7 +649,7 @@ def generate_plot_script(
 ) -> str:
     """Generate AutoLISP -PLOT script content."""
     orient_code = orientation[0].upper()
-    output_fwd = output_pdf.replace(os.sep, "/")
+    output_fwd = _to_native_path(output_pdf).replace("\\", "/")
 
     if window:
         x0, y0, x1, y1 = window
@@ -612,20 +678,27 @@ def generate_plot_script(
     return lisp
 
 
-def run_conversion(dwg_path: str, script_content: str, timeout: int = 120) -> bool:
-    """Run accoreconsole with a given script."""
-    dwg_path = os.path.abspath(dwg_path)
-    scr_path = os.path.join(tempfile.gettempdir(), f"plot_{Path(dwg_path).stem}_{os.getpid()}.scr")
+def run_conversion(dwg_path: str, script_content: str, work_dir: str, timeout: int = 120) -> bool:
+    """Run accoreconsole with a given script. 在指定的 work_dir 中操作。"""
+    dwg_win = _to_native_path(dwg_path)
+
+    scr_path = os.path.join(work_dir, f"_plot_{uuid.uuid4().hex[:6]}.scr")
     with open(scr_path, "w", encoding="utf-8-sig") as f:
         f.write(script_content)
 
-    cmd = [ACCORE, "/i", dwg_path, "/s", scr_path, "/l", "en-US"]
+    cmd = [ACCORE, "/i", dwg_win, "/s", _to_native_path(scr_path), "/l", "en-US"]
     subprocess.run(cmd, capture_output=True, timeout=timeout)
+
     try:
         os.remove(scr_path)
     except OSError:
         pass
     return True
+
+
+def _emit(callback, event: str, data: dict):
+    if callback:
+        callback(event, data)
 
 
 def convert_dwg(
@@ -639,6 +712,7 @@ def convert_dwg(
     paper_size: str = None,
     orientation: str = None,
     timeout: int = None,
+    progress_callback=None,
 ) -> ConversionResult:
     """Convert a DWG file to PDF with optional border detection and splitting.
 
@@ -662,44 +736,63 @@ def convert_dwg(
     timeout = timeout or DEFAULT_TIMEOUT
     start = time.time()
     dwg_path = os.path.abspath(dwg_path)
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
+
+    # 1 个 DWG = 1 个工作目录，所有操作共用
+    work_dir = _create_work_dir()
+
     result = ConversionResult(dwg_path=dwg_path)
-    dxf_path = ""
 
     try:
+        # 复制 DWG 到工作目录（仅一次）
+        safe_dwg = _safe_ascii_copy(dwg_path, work_dir)
+
         if split_borders:
             # Step 1: DWG → DXF
-            dxf_path = dwg_to_dxf(dwg_path, output_dir)
+            _emit(progress_callback, "progress", {"step": "dwg_to_dxf", "file": os.path.basename(dwg_path)})
+            dxf_path = dwg_to_dxf(safe_dwg, work_dir)
             result.dxf_path = dxf_path
 
             # Step 2: Detect borders
+            _emit(progress_callback, "progress", {"step": "detect_borders", "file": os.path.basename(dwg_path)})
             borders = detect_borders(dxf_path)
             result.borders = borders
+            _emit(progress_callback, "borders", {
+                "file": os.path.basename(dwg_path),
+                "count": len(borders),
+                "borders": [
+                    {"name": b.name, "size_label": b.size_label,
+                     "width_mm": round(b.paper_width_mm), "height_mm": round(b.paper_height_mm)}
+                    for b in borders
+                ],
+            })
 
             if not borders:
-                # No borders found, convert entire drawing
                 ps = paper_size or get_paper_size_name(841, 594, "L")
                 ori = orientation or "L"
                 pdf_name = f"{Path(dwg_path).stem}.pdf"
                 pdf_path = os.path.join(output_dir, pdf_name)
-                pdf_temp = os.path.join(output_dir, "_temp.pdf")
+                pdf_temp = os.path.join(work_dir, "_temp.pdf")
                 script = generate_plot_script(pdf_temp, ps, ori, printer, plot_style)
-                ok = run_conversion(dwg_path, script, timeout)
+                ok = run_conversion(safe_dwg, script, work_dir, timeout)
                 if ok and os.path.exists(pdf_temp):
                     if os.path.exists(pdf_path):
                         os.remove(pdf_path)
-                    os.rename(pdf_temp, pdf_path)
+                    shutil.move(pdf_temp, pdf_path)
                     result.pdf_path = pdf_path
                     result.success = True
             else:
-                # Step 3: Convert borders (merged or separate)
+                # Step 3: 生成所有图框的 -PLOT 命令，合并成 1 个脚本，1 次 accoreconsole
                 if merge_borders:
                     groups = merge_nearby_borders(borders)
                 else:
                     groups = [[b] for b in borders]
 
-                all_ok = True
-                pdf_files = []
+                target_dir = work_dir
+                plot_commands = '(command "_.FILEDIA" "0")\n(command "_.CMDDIA" "0")\n(command "_.EXPERT" "1")\n'
+                pdf_map = []  # [(temp_path, final_path), ...]
+
                 for i, group in enumerate(groups):
                     if len(group) == 1:
                         border = group[0]
@@ -726,18 +819,35 @@ def convert_dwg(
 
                     pdf_name = f"{i+1:02d}-{Path(dwg_path).stem}-{label}.pdf"
                     pdf_path = os.path.join(output_dir, pdf_name)
-                    pdf_temp = os.path.join(output_dir, f"_temp_{i}.pdf")
+                    pdf_temp = os.path.join(target_dir, f"_temp_{i}.pdf")
+                    pdf_win = _to_native_path(pdf_temp).replace("\\", "/")
 
-                    script = generate_plot_script(
-                        pdf_temp, ps, ori, printer, plot_style,
-                        window=(bx0, by0, bx1, by1),
+                    plot_commands += (
+                        f'(command "_.-PLOT" "Y" "" "{printer}" "{ps}" '
+                        f'"M" "{ori[0].upper()}" "N" '
+                        f'"W" "{bx0:.2f},{by0:.2f}" "{bx1:.2f},{by1:.2f}" '
+                        f'"F" "C" "Y" "{plot_style}" "N" "" "{pdf_win}" "N" "Y")\n'
                     )
+                    pdf_map.append((pdf_temp, pdf_path))
 
-                    ok = run_conversion(dwg_path, script, timeout)
-                    if ok and os.path.exists(pdf_temp):
+                    _emit(progress_callback, "progress", {
+                        "step": "plot_pdf", "file": os.path.basename(dwg_path),
+                        "border_index": i + 1, "total_borders": len(groups),
+                        "size_label": label,
+                    })
+
+                plot_commands += '(command "_.QUIT" "N")\n'
+
+                # 1 次 accoreconsole 生成所有 PDF
+                ok = run_conversion(safe_dwg, plot_commands, target_dir, timeout)
+
+                all_ok = True
+                pdf_files = []
+                for pdf_temp, pdf_path in pdf_map:
+                    if os.path.exists(pdf_temp):
                         if os.path.exists(pdf_path):
                             os.remove(pdf_path)
-                        os.rename(pdf_temp, pdf_path)
+                        shutil.move(pdf_temp, pdf_path)
                         pdf_files.append(pdf_path)
                     elif os.path.exists(pdf_path):
                         pdf_files.append(pdf_path)
@@ -747,34 +857,35 @@ def convert_dwg(
                 if pdf_files:
                     result.pdf_path = pdf_files[0] if len(pdf_files) == 1 else json.dumps(pdf_files)
                     result.success = all_ok
+                    _emit(progress_callback, "done", {
+                        "file": os.path.basename(dwg_path),
+                        "pdf_count": len(pdf_files),
+                        "success": all_ok,
+                    })
         else:
             # Simple conversion without border detection
             ps = paper_size or get_paper_size_name(841, 594, "L")
             ori = orientation or "L"
             pdf_name = f"{Path(dwg_path).stem}.pdf"
             pdf_path = os.path.join(output_dir, pdf_name)
-            pdf_temp = os.path.join(output_dir, "_temp.pdf")
+            pdf_temp = os.path.join(work_dir, "_temp.pdf")
             script = generate_plot_script(pdf_temp, ps, ori, printer, plot_style)
-            ok = run_conversion(dwg_path, script, timeout)
+            ok = run_conversion(safe_dwg, script, work_dir, timeout)
             if ok and os.path.exists(pdf_temp):
                 if os.path.exists(pdf_path):
                     os.remove(pdf_path)
-                os.rename(pdf_temp, pdf_path)
+                shutil.move(pdf_temp, pdf_path)
                 result.pdf_path = pdf_path
                 result.success = True
 
     except Exception as ex:
         result.error = str(ex)
+        _emit(progress_callback, "error", {"file": os.path.basename(dwg_path), "error": str(ex)})
     finally:
         result.elapsed = time.time() - start
-        # Clean up any leftover temp PDFs
-        # Clean up any leftover temp PDFs
-        for f in os.listdir(output_dir):
-            if f.startswith("_temp_") and f.endswith(".pdf"):
-                try:
-                    os.remove(os.path.join(output_dir, f))
-                except OSError:
-                    pass
+        # 清理工作目录中的临时文件
+        if os.path.isdir(work_dir):
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     return result
 
@@ -782,27 +893,28 @@ def convert_dwg(
 def batch_convert(
     input_dir: str,
     output_dir: str = "./output",
+    progress_callback=None,
     **kwargs,
 ) -> list[ConversionResult]:
     """Batch convert all DWG files in a directory."""
     results = []
     dwg_files = sorted(Path(input_dir).glob("*.dwg"))
+    total = len(dwg_files)
 
-    print(f"Found {len(dwg_files)} DWG files in {input_dir}")
+    print(f"Found {total} DWG files in {input_dir}")
+    _emit(progress_callback, "batch_start", {"total": total})
 
     for i, dwg in enumerate(dwg_files, 1):
-        print(f"\n[{i}/{len(dwg_files)}] {dwg.name}")
-        r = convert_dwg(str(dwg), output_dir, **kwargs)
-        results.append(r)
+        print(f"\n[{i}/{total}] {dwg.name}")
+        _emit(progress_callback, "batch_file", {"index": i, "total": total, "file": dwg.name})
 
-        if r.success:
-            borders_info = ""
-            if r.borders:
-                for b in r.borders:
-                    borders_info += f"\n    Border: {b.name} {b.paper_width_mm:.0f}x{b.paper_height_mm:.0f}mm ({b.standard_size})"
-            print(f"  OK ({r.elapsed:.1f}s) -> {r.pdf_path}{borders_info}")
-        else:
-            print(f"  FAILED ({r.elapsed:.1f}s): {r.error}")
+        def _cb(event, data, idx=i):
+            data["batch_index"] = idx
+            data["batch_total"] = total
+            _emit(progress_callback, event, data)
+
+        r = convert_dwg(str(dwg), output_dir, progress_callback=_cb, **kwargs)
+        results.append(r)
 
     # Summary
     ok = sum(1 for r in results if r.success)
@@ -812,9 +924,9 @@ def batch_convert(
             total_pdfs += len(r.borders) if r.borders else 1
     total_time = sum(r.elapsed for r in results)
     avg_time = total_time / len(results) if results else 0
+    avg_pdf = f"{total_time/total_pdfs:.1f}s/PDF" if total_pdfs else "N/A"
     print(f"\n=== Done: {ok}/{len(results)} DWG | {total_pdfs} PDFs | "
-          f"Total {total_time:.1f}s | Avg {avg_time:.1f}s/DWG | "
-          f"{total_time/total_pdfs:.1f}s/PDF ===")
+          f"Total {total_time:.1f}s | Avg {avg_time:.1f}s/DWG | {avg_pdf} ===")
     return results
 
 
