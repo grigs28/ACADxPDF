@@ -21,10 +21,34 @@ STOP_THRESHOLD = 0.05  # 加速比提升 <5% 则停止
 
 def get_rss_mb():
     try:
+        import psutil
+        return psutil.Process().memory_info().rss / 1024 / 1024
+    except ImportError:
+        pass
+    try:
         with open("/proc/self/status") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1]) / 1024
+    except Exception:
+        pass
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        psapi = ctypes.windll.psapi
+        PROCESS_VM_READ = 0x0010
+        PROCESS_QUERY_INFORMATION = 0x0400
+        handle = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, kernel32.GetCurrentProcessId())
+        mem = ctypes.c_size_t()
+        psapi.GetProcessMemoryInfo(handle, ctypes.byref(mem), ctypes.sizeof(mem))
+        # PROCESS_MEMORY_COUNTERS.WorkingSetSize is at offset 8 (after cb=4, PageFaultCount=4)
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t)]
+        counters = PROCESS_MEMORY_COUNTERS()
+        psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), ctypes.sizeof(counters))
+        kernel32.CloseHandle(handle)
+        return counters.WorkingSetSize / 1024 / 1024
     except Exception:
         pass
     return 0
@@ -133,8 +157,14 @@ def main():
 
     # 生成报告
     report = generate_report(all_results, n)
+    # Windows 原生 vs WSL 使用不同报告文件
+    import sys as _sys
+    if _sys.platform == "win32" or not os.path.exists("/proc/version"):
+        report_name = "Win线程性能测试报告.md"
+    else:
+        report_name = "线程性能测试报告.md"
     report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "docs", "线程性能测试报告.md")
+                               "docs", report_name)
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
@@ -142,19 +172,40 @@ def main():
 
 
 def generate_report(results, n_files):
+    import platform
     lines = []
     lines.append("# ACADxPDF 线程性能测试报告\n")
     lines.append(f"**测试日期：** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"**测试方法：** 直接调用 `convert_dwg()`，ThreadPoolExecutor 队列消费")
     lines.append(f"**测试文件：** {n_files} 个 DWG（bench32 目录）\n")
 
+    # 系统环境
+    lines.append("## 系统环境\n")
+    lines.append(f"| 项目 | 值 |")
+    lines.append(f"|------|-----|")
+    lines.append(f"| 操作系统 | {platform.system()} {platform.release()} |")
+    lines.append(f"| CPU | {platform.processor() or 'N/A'} |")
+    lines.append(f"| Python | {platform.python_version()} |")
+    lines.append(f"| 测试终止条件 | 加速比提升 <{STOP_THRESHOLD*100:.0f}% 时停止 |\n")
+
     # 汇总表
     lines.append("## 测试结果汇总\n")
-    lines.append(f"| 线程数 | 总耗时(s) | 成功率 | PDF数 | 峰值RSS(MB) | 加速比 | 平均(s/文件) |")
-    lines.append(f"|--------|----------|--------|-------|------------|--------|-------------|")
+    lines.append(f"| 线程数 | 总耗时(s) | 成功率 | PDF数 | 峰值RSS(MB) | 加速比 | 平均(s/文件) | 提升(vs上轮) |")
+    lines.append(f"|--------|----------|--------|-------|------------|--------|-------------|-------------|")
+    prev_sp = 0
     for r in results:
         avg = r["total_time"] / r["total"] if r["total"] > 0 else 0
-        lines.append(f"| {r['workers']} | {r['total_time']:.1f} | {r['ok_count']}/{r['total']} | {r['total_pdfs']} | {r['peak_rss_mb']:.0f} | {r['speedup']:.2f}x | {avg:.1f} |")
+        if prev_sp > 0:
+            improvement = f"+{(r['speedup'] - prev_sp) / prev_sp * 100:.0f}%"
+        else:
+            improvement = "—"
+        stop_mark = ""
+        if r is results[-1] and len(results) > 1 and prev_sp > 0:
+            imp_val = (r['speedup'] - prev_sp) / prev_sp
+            if imp_val < STOP_THRESHOLD:
+                stop_mark = " **停止**"
+        lines.append(f"| {r['workers']} | {r['total_time']:.1f} | {r['ok_count']}/{r['total']} | {r['total_pdfs']} | {r['peak_rss_mb']:.0f} | {r['speedup']:.2f}x | {avg:.1f} | {improvement}{stop_mark} |")
+        prev_sp = r['speedup']
 
     # 结论
     lines.append("\n## 分析\n")
