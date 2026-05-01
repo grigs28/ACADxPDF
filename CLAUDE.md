@@ -73,12 +73,12 @@ All config is in `.env` (see `.env.example`). Key variables:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ACAD_PATH` | `/mnt/c/opt/AutoCAD 2022/accoreconsole.exe` | Path to AutoCAD console (Windows filesystem) |
-| `WORK_DIR` | (空) | 留空则使用 output 目录；设置则在指定目录创建独立子目录 |
+| `WORK_DIR` | (空) | 留空则使用项目下 `_work/`；设置则在指定目录创建独立子目录 |
 | `PRINTER` | `DWG To PDF.pc3` | PC3 printer config |
 | `PLOT_STYLE` | `monochrome.ctb` | Plot style table |
 | `TIMEOUT` | `180` | Per-file timeout (seconds) |
 | `BORDER_KEYWORDS` | `TK,TUKUANG,BORDER,FRAME,TITLE` | Block name keywords for border detection |
-| `MAX_WORKERS` | `4` | Max thread pool workers (推荐 2) |
+| `MAX_WORKERS` | `6` | Max thread pool workers (推荐 4-8) |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `5557` | Flask server binding |
 
 ## Dependencies
