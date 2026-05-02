@@ -4,12 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ACADxPDF is a Python batch DWG-to-PDF converter with automatic drawing border (图框) detection. A single DWG may contain multiple drawing sheets; this tool detects each border and outputs separate PDFs. It targets the Chinese AEC workflow and runs in WSL2 (requires AutoCAD 2022 `accoreconsole.exe` on Windows filesystem).
-
-## Project Location
-
-- **Code & source files**: `/mnt/c/opt/ACADxPDF/` (Windows NTFS, accoreconsole can access directly)
-- **AutoCAD 2022**: `/mnt/c/opt/AutoCAD 2022/` (Windows filesystem)
+ACADxPDF is a Python batch DWG-to-PDF converter with automatic drawing border (图框) detection. A single DWG may contain multiple drawing sheets; this tool detects each border and outputs separate PDFs. It targets the Chinese AEC workflow and runs on both **Windows native** and **WSL2** (requires AutoCAD 2026 `accoreconsole.exe`).
 
 ## Commands
 
@@ -32,8 +27,11 @@ python tools/test_api.py
 # DXF analysis/debugging tool
 python tools/analyze_dxf.py
 
-# Multi-thread benchmark
+# Multi-thread benchmark (CLI, writes report to docs/)
 python tools/bench_threads.py
+
+# API-based benchmark
+python tools/benchmark_api.py
 ```
 
 No test suite, linter, formatter, or CI/CD is configured. There is no `setup.py`, `pyproject.toml`, or `requirements.txt` — dependencies (ezdxf, flask) are installed manually.
@@ -46,7 +44,7 @@ acad2pdf/
 │   ├─ Border detection (block + rectangle strategies)
 │   ├─ AutoLISP script generation for -PLOT commands
 │   ├─ accoreconsole invocation (DWG→DXF, DXF→PDF)
-│   └─ batch_convert() with ThreadPoolExecutor
+│   └─ batch_convert() with sequential iteration
 └── api.py (386 lines — Flask HTTP + Web UI + SSE)
     ├─ Serves static/index.html as Web UI
     ├─ SSE streaming progress via /stream
@@ -57,11 +55,12 @@ acad2pdf/
 
 1. `convert_dwg()` receives a DWG path
 2. DWG is copied to a unique `_work/<uuid>/` directory (avoids conflicts under multi-threading)
-3. `dwg_to_dxf()` converts DWG→DXF via `accoreconsole.exe` + AutoLISP script
-4. `detect_borders()` tries block-name detection first, falls back to closed-rectangle detection
-5. All borders are combined into a **single** AutoLISP script (multiple `-PLOT` commands), run by **one** accoreconsole invocation
-6. Final PDFs move from `_work/` to output dir, temp dir is cleaned up
-7. Returns `ConversionResult` dataclass with paths, border info, timing, status
+3. Non-ASCII filenames are renamed to ASCII-safe names via `_safe_ascii_copy()` — accoreconsole cannot handle Chinese characters in paths
+4. `dwg_to_dxf()` converts DWG→DXF via `accoreconsole.exe` + AutoLISP script
+5. `detect_borders()` tries block-name detection first, falls back to closed-rectangle detection
+6. All borders are combined into a **single** AutoLISP script (multiple `-PLOT` commands), run by **one** accoreconsole invocation
+7. Final PDFs move from `_work/` to output dir, temp dir is cleaned up
+8. Returns `ConversionResult` dataclass with paths, border info, timing, status
 
 ### Key Classes
 
@@ -95,8 +94,8 @@ All config is in `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ACAD_PATH` | `C:\Autodesk\AutoCAD 2020\accoreconsole.exe` | Path to AutoCAD console |
-| `WORK_DIR` | (empty → `_work/`) | Work directory on Windows filesystem |
+| `ACAD_PATH` | `C:\opt\AutoCAD 2026\accoreconsole.exe` | Path to AutoCAD console |
+| `WORK_DIR` | (empty → `_work/`) | Work directory (must be on Windows filesystem under WSL) |
 | `ACAD_UNIT` | `毫米` | Unit name ("毫米" for Chinese, "MM" for English) |
 | `PRINTER` | `DWG To PDF.pc3` | PC3 printer config |
 | `PLOT_STYLE` | `monochrome.ctb` | Plot style table |
@@ -109,14 +108,17 @@ All config is in `.env` (see `.env.example`). Key variables:
 
 ## Dependencies
 
-- **Python 3.10+** (conda env: `pdf` at `/opt/conda3`)
+- **Python 3.10+** (conda env: `pdf`)
 - **ezdxf** — DXF file parsing
 - **flask** — REST API + Web UI
-- **AutoCAD 2022** — `accoreconsole.exe` at `/mnt/c/opt/AutoCAD 2022/`
+- **AutoCAD 2026** — `accoreconsole.exe`
 
-## WSL Path Handling
+## Platform Support
 
-`converter.py` auto-detects WSL via `/proc/version` and converts paths: `/mnt/c/...` → `C:\...`. All accoreconsole calls use Windows paths; all Python I/O uses WSL paths. Work directories must be on Windows filesystem (`/mnt/c/...`) so accoreconsole can access them.
+`converter.py` auto-detects the runtime environment via `_is_wsl()` and adapts paths accordingly:
+
+- **Windows native**: Paths used as-is. `accoreconsole.exe` invoked directly.
+- **WSL2**: `/mnt/c/...` paths are converted to `C:\...` for accoreconsole calls via `_to_native_path()`. Work directories must be on Windows filesystem so accoreconsole can access them.
 
 ## Language
 
