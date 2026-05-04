@@ -94,7 +94,7 @@
 ;;; 综合评分匹配
 ;;; ------------------------------------------------------------
 (defun ap:match-paper-for-frame (frame / fw fh unit papers result
-                                   paper-name paper-w paper-h orient)
+                                   paper-name orient)
   (setq unit (ap:resolve-units))
   (setq fw (* (ap:frame-width frame) unit)
         fh (* (ap:frame-height frame) unit))
@@ -114,6 +114,22 @@
       (setq frame (ap:frame-put frame "paper-match" "A0"))
       (setq frame (ap:frame-put frame "orientation" "landscape"))))
   frame)
+
+;;; ------------------------------------------------------------
+;;; -PLOT 命令用的纸张名（与 Python 流程一致）
+;;; ------------------------------------------------------------
+(defun ap:plot-paper-name (paper-name / papers p pw ph w-str h-str unit-str)
+  (setq papers '(("A0" 841 1189) ("A1" 594 841) ("A1+0.5" 594 914.5)
+                 ("A1+1" 594 1025) ("A2" 420 594) ("A3" 297 420) ("A4" 210 297)))
+  (setq p (assoc paper-name papers))
+  (setq unit-str (ap:get-config-default "acad-unit" "毫米"))
+  (if p
+    (progn
+      (setq pw (float (cadr p))
+            ph (float (caddr p)))
+      (strcat "ISO full bleed " paper-name
+              " (" (rtos pw 2 2) " x " (rtos ph 2 2) " " unit-str ")"))
+    (strcat "ISO full bleed A0 (841.00 x 1189.00 " unit-str ")")))
 
 (princ "\n[AutoPlot] ap-paper.lsp 已加载。")
 (princ)

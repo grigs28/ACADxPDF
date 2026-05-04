@@ -108,7 +108,7 @@
 ;;; ------------------------------------------------------------
 (defun ap:format-elapsed (seconds / m s)
   (setq m (fix (/ seconds 60.0))
-        s (% (fix seconds) 60))
+        s (rem (fix seconds) 60))
   (strcat (itoa m) " 分 " (itoa s) " 秒"))
 
 (defun ap:output-stats (/ start end elapsed total ok fail pdfs
@@ -179,15 +179,21 @@
 
 (defun ap:frame-width (frame / b)
   (setq b (cdr (assoc "bounds" frame)))
-  (abs (- (car (cadr b)) (car (car b)))))
+  (if (and b (cadr b) (car b))
+    (abs (- (car (cadr b)) (car (car b))))
+    0.0))
 
 (defun ap:frame-height (frame / b)
   (setq b (cdr (assoc "bounds" frame)))
-  (abs (- (cadr (cadr b)) (cadr (car b)))))
+  (if (and b (cadr b) (car b))
+    (abs (- (cadr (cadr b)) (cadr (car b))))
+    0.0))
 
 (defun ap:frame-center (frame / b)
   (setq b (cdr (assoc "bounds" frame)))
-  (ap:point-center (car b) (cadr b)))
+  (if (and b (car b) (cadr b))
+    (ap:point-center (car b) (cadr b))
+    '(0.0 0.0)))
 
 (defun ap:frame-area (frame)
   (* (ap:frame-width frame) (ap:frame-height frame)))

@@ -6,20 +6,33 @@
 ;;; ------------------------------------------------------------
 ;;; 图框记录构造与访问
 ;;; ------------------------------------------------------------
-(defun ap:make-frame-record (ent ftype block-name layout bounds)
-  (list
-    (cons "entity" ent)
-    (cons "type" ftype)
-    (cons "block-name" block-name)
-    (cons "layout" layout)
-    (cons "bounds" (or bounds (ap:get-entity-bounds ent)))
-    (cons "paper-match" nil)
-    (cons "orientation" nil)))
+(defun ap:make-frame-record (ent ftype block-name layout bounds / actual-bounds obj minpt maxpt min-list max-list)
+  (if bounds
+    (setq actual-bounds bounds)
+    (progn
+      (setq obj (vlax-ename->vla-object ent))
+      (setq minpt nil maxpt nil)
+      (vla-GetBoundingBox obj 'minpt 'maxpt)
+      (setq min-list (vlax-safearray->list minpt)
+            max-list (vlax-safearray->list maxpt))
+      (if (and min-list max-list)
+        (setq actual-bounds (list min-list max-list))
+        (setq actual-bounds nil))))
+  (if (null actual-bounds)
+    nil
+    (list
+      (cons "entity" ent)
+      (cons "type" ftype)
+      (cons "block-name" block-name)
+      (cons "layout" layout)
+      (cons "bounds" actual-bounds)
+      (cons "paper-match" nil)
+      (cons "orientation" nil))))
 
 ;;; ------------------------------------------------------------
 ;;; 模型空间块名搜索
 ;;; ------------------------------------------------------------
-(defun ap:search-blocks-model (block-names / result ss i ent)
+(defun ap:search-blocks-model (block-names / result ss i ent rec)
   (setq result nil)
   (foreach name block-names
     (setq ss (ssget "_X" (list '(0 . "INSERT") (cons 2 name))))
@@ -29,22 +42,24 @@
         (setq i 0)
         (repeat (sslength ss)
           (setq ent (ssname ss i))
-          (setq result (cons
-            (ap:make-frame-record ent "BLOCK" name "Model" nil)
-            result))
+          (setq rec (ap:make-frame-record ent "BLOCK" name "Model" nil))
+          (if rec (setq result (cons rec result)))
           (setq i (1+ i))))))
   result)
 
 ;;; ------------------------------------------------------------
 ;;; 动态块有效名称识别
 ;;; ------------------------------------------------------------
-(defun ap:get-effective-name (ent / obj)
+(defun ap:get-effective-name (ent / obj result)
   (setq obj (vlax-ename->vla-object ent))
-  (if (= (vla-get-ObjectName obj) "AcDbBlockReference")
-    (vl-catch-all-apply 'vla-get-EffectiveName (list obj))
-    nil))
+  (setq result
+    (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+  (if (or (vl-catch-all-error-p result)
+          (/= result "AcDbBlockReference"))
+    nil
+    (vl-catch-all-apply 'vla-get-EffectiveName (list obj))))
 
-(defun ap:search-blocks-enhanced (block-names / ss-all result i ent eff-name)
+(defun ap:search-blocks-enhanced (block-names / ss-all result i ent eff-name rec)
   (setq ss-all (ssget "_X" '((0 . "INSERT"))))
   (if ss-all
     (progn
@@ -54,9 +69,9 @@
         (setq eff-name (ap:get-effective-name ent))
         (if (and eff-name
                  (vl-position eff-name block-names))
-          (setq result (cons
-            (ap:make-frame-record ent "BLOCK" eff-name "Model" nil)
-            result)))
+          (progn
+            (setq rec (ap:make-frame-record ent "BLOCK" eff-name "Model" nil))
+            (if rec (setq result (cons rec result)))))
         (setq i (1+ i)))
       result)
     nil))
@@ -78,7 +93,7 @@
         (setq result (append result layout-result)))))
   result)
 
-(defun ap:search-in-layout (block-names layout-name / ss i ent result)
+(defun ap:search-in-layout (block-names layout-name / ss i ent rec result)
   (setq result nil)
   (foreach name block-names
     (setq ss (ssget "_X"
@@ -89,9 +104,8 @@
         (setq i 0)
         (repeat (sslength ss)
           (setq ent (ssname ss i))
-          (setq result (cons
-            (ap:make-frame-record ent "BLOCK" name layout-name nil)
-            result))
+          (setq rec (ap:make-frame-record ent "BLOCK" name layout-name nil))
+          (if rec (setq result (cons rec result)))
           (setq i (1+ i))))))
   result)
 
@@ -131,7 +145,7 @@
   (list (list (apply 'min xs) (apply 'min ys))
         (list (apply 'max xs) (apply 'max ys))))
 
-(defun ap:detect-rectangles (/ ss i ent area min-area bounds frames)
+(defun ap:detect-rectangles (/ ss i ent area min-area bounds frames rec)
   (setq min-area (ap:get-config-default "rect-min-area" 50000))
   (setq ss (ssget "_X" '((0 . "LWPOLYLINE") (70 . 1))))
   (setq frames nil)
@@ -146,9 +160,10 @@
             (setq area (* (abs (- (car (cadr bounds)) (car (car bounds))))
                           (abs (- (cadr (cadr bounds)) (cadr (car bounds))))))
             (if (>= area min-area)
-              (setq frames (cons
-                (ap:make-frame-record ent "RECTANGLE" nil "Model" bounds)
-                frames)))))
+              (progn
+                (setq rec (vl-catch-all-apply 'ap:make-frame-record (list ent "RECTANGLE" nil "Model" bounds)))
+                (if (and rec (not (vl-catch-all-error-p rec)))
+                  (setq frames (cons rec frames)))))))
         (setq i (1+ i)))))
   frames)
 
@@ -174,18 +189,32 @@
       (/ inter-area (float (min area1 area2))))
     0.0))
 
-(defun ap:dedup-frames (frames / result skip fi fj)
+(defun ap:dedup-frames (frames / result keep fi fj to-remove overlap b1 b2 a1 a2)
   (setq result nil)
   (foreach fi frames
-    (setq skip nil)
+    (setq keep T to-remove nil)
     (foreach fj result
-      (if (>= (ap:overlap-ratio
-                (ap:frame-get fi "bounds")
-                (ap:frame-get fj "bounds")) 0.9)
-        (if (< (ap:frame-area fi) (ap:frame-area fj))
-          (setq skip T)
-          (setq result (vl-remove fj result)))))
-    (if (null skip)
+      (setq b1 (vl-catch-all-apply 'ap:frame-get (list fi "bounds"))
+            b2 (vl-catch-all-apply 'ap:frame-get (list fj "bounds")))
+      (if (or (vl-catch-all-error-p b1) (vl-catch-all-error-p b2)
+              (null b1) (null b2))
+        (setq overlap 0.0)
+        (progn
+          (setq overlap (vl-catch-all-apply 'ap:overlap-ratio (list b1 b2)))
+          (if (vl-catch-all-error-p overlap) (setq overlap 0.0))))
+      (if (>= overlap 0.9)
+        (progn
+          (setq a1 (vl-catch-all-apply 'ap:frame-area (list fi))
+                a2 (vl-catch-all-apply 'ap:frame-area (list fj)))
+          (if (or (vl-catch-all-error-p a1) (vl-catch-all-error-p a2)
+                  (null a1) (null a2))
+            (setq keep nil)
+            (if (< a1 a2)
+              (setq keep nil)
+              (setq to-remove (cons fj to-remove)))))))
+    (foreach r to-remove
+      (setq result (vl-remove r result)))
+    (if keep
       (setq result (cons fi result))))
   (reverse result))
 
@@ -206,6 +235,35 @@
        (if (> (abs (- (cadr ca) (cadr cb))) 10.0)
          (> (cadr ca) (cadr cb))
          (< (car ca) (car cb))))))
+
+;;; 安全排序：预计算中心点，排序失败则返回未排序列表
+(defun ap:safe-sort-frames (frames / centers pairs sorted result err)
+  ;; 预计算中心点，构造 (center . frame) 对
+  (setq pairs nil)
+  (foreach f frames
+    (setq centers (vl-catch-all-apply 'ap:frame-center (list f)))
+    (if (vl-catch-all-error-p centers)
+      (setq centers '(0.0 0.0)))
+    (setq pairs (cons (cons centers f) pairs)))
+  (setq pairs (reverse pairs))
+  ;; 按中心点排序 pairs
+  (setq sorted (vl-catch-all-apply 'vl-sort
+    (list pairs
+      '(lambda (a b / ca cb)
+         (setq ca (car a) cb (car b))
+         (if (> (abs (- (cadr ca) (cadr cb))) 10.0)
+           (> (cadr ca) (cadr cb))
+           (< (car ca) (car cb)))))))
+  (if (vl-catch-all-error-p sorted)
+    (progn
+      (princ (strcat "\n[DEBUG] sort failed, using unsorted: "
+                     (vl-catch-all-error-message sorted)))
+      frames)
+    (progn
+      (setq result nil)
+      (foreach p sorted
+        (setq result (cons (cdr p) result)))
+      (reverse result))))
 
 ;;; ------------------------------------------------------------
 ;;; 主入口：图框识别
@@ -243,13 +301,17 @@
           (setq frames rect-result)
           (princ (strcat "\n  矩形检测找到 " (itoa (length frames)) " 个候选"))))))
 
-  ;; 6. 去重、验证、排序
+  ;; 6. 去重、排序
   (if frames
     (progn
       (setq frames (ap:dedup-frames frames))
-      (setq frames (vl-remove-if-not 'ap:validate-frame frames))
-      (setq frames (ap:sort-frames frames))
-      (princ (strcat "\n[AutoPlot] 共识别 " (itoa (length frames)) " 个有效图框")))
+      (if frames
+        (progn
+          (setq frames (ap:safe-sort-frames frames))
+          (if frames
+            (princ (strcat "\n[AutoPlot] 共识别 " (itoa (length frames)) " 个有效图框"))
+            (princ "\n[AutoPlot] 排序后为空。")))
+        (princ "\n[AutoPlot] 去重后为空。")))
     (princ "\n[AutoPlot] 未找到任何图框。"))
 
   (setq *frame-list* frames)
