@@ -141,7 +141,7 @@ header{
 .drop .hint{color:var(--text3);font-size:11px;margin-top:4px;font-family:var(--mono)}
 
 /* File list */
-.flist{margin-top:10px}
+.flist{margin-top:10px;max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .fitem{
   display:flex;align-items:center;padding:7px 12px;margin-top:4px;
   background:var(--surface);border:1px solid var(--border);border-radius:4px;
@@ -285,12 +285,12 @@ header{
             </div>
             <input type="file" id="fi" multiple accept=".dwg" style="display:none">
           </div>
-          <div class="flist" id="fl"></div>
           <div class="brow">
             <button class="btn bp" id="bGo" disabled>▶ 开始转换</button>
             <button class="btn bg" id="bDl" style="display:none">⬇ 下载 ZIP</button>
             <button class="btn bd" id="bClr">✕ 清空</button>
           </div>
+          <div class="flist" id="fl"></div>
         </div>
         <!-- Config -->
         <div class="card">
@@ -305,7 +305,6 @@ header{
               <div class="sw-row" title="检测每个图框，分别输出独立PDF"><label style="font-size:12px;color:var(--text2)">拆分图框</label><label class="sw"><input type="checkbox" id="cSplit" checked><span class="sl"></span></label><span class="sw-label" id="lSplit">开</span></div>
               <div class="sw-row" title="根据图框尺寸自动选择A3/A2/A1等标准纸张"><label style="font-size:12px;color:var(--text2)">自动匹配图框</label><label class="sw"><input type="checkbox" id="cAuto" checked><span class="sl"></span></label><span class="sw-label" id="lAuto">开</span></div>
               <div class="sw-row" title="将相邻小图框合并为一个大图框输出"><label style="font-size:12px;color:var(--text2)">合并图框</label><label class="sw"><input type="checkbox" id="cMerge"><span class="sl"></span></label><span class="sw-label" id="lMerge">关</span></div>
-              <div class="sw-row" title="上传文件已为T3格式（代理实体已展开），使用accoreconsole快速转换；关闭则使用acad.exe处理含代理实体的原始DWG"><label style="font-size:12px;color:var(--text2)">T3格式</label><label class="sw"><input type="checkbox" id="cT3" checked><span class="sl"></span></label><span class="sw-label" id="lT3">开</span></div>
             </div>
           </div>
           <div class="brow"><button class="btn bs" id="bCfg">保存配置</button></div>
@@ -339,13 +338,13 @@ header{
             </div>
             <input type="file" id="fi2" multiple accept=".pdf" style="display:none">
           </div>
-          <div class="flist" id="fl2"></div>
           <div class="brow">
             <button class="btn ba" id="bGo2" disabled>▶ 开始转换</button>
             <button class="btn bs" id="bAdd" style="display:none">+ 追加</button>
             <button class="btn bg" id="bDl2" style="display:none">⬇ 下载 ZIP</button>
             <button class="btn bd" id="bClr2">✕ 清空</button>
           </div>
+          <div class="flist" id="fl2"></div>
         </div>
         <!-- Workers -->
         <div class="card">
@@ -607,7 +606,12 @@ function sse(){
   evtSrc.addEventListener('progress',function(e){var d=JSON.parse(e.data);var m={dwg_to_dxf:'DWG→DXF',detect_borders:'检测图框',plot_pdf:'生成PDF'};updP(d.file,m[d.step]||d.step,d)});
   evtSrc.addEventListener('borders',function(e){var d=JSON.parse(e.data);updP(d.file,'检测到 '+d.count+' 个图框',d)});
   evtSrc.addEventListener('file_done',function(e){var d=JSON.parse(e.data);if(d.success)setOk(d.file,d);else setErr(d.file,d.error)});
-  evtSrc.addEventListener('task_done',function(e){var d=JSON.parse(e.data);showSt(d);$('bGo').disabled=false});
+  evtSrc.addEventListener('task_done',function(e){var d=JSON.parse(e.data);showSt(d);$('bGo').disabled=false;
+    // 把所有还在转圈的 item 标记为完成/失败
+    document.querySelectorAll('#pl .pitem:not(.ok):not(.err)').forEach(function(el){
+      el.classList.add('err');var sp=el.querySelector('.sp');if(sp){sp.style='border:none;background:var(--red);animation:none;border-radius:50%;color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px';sp.textContent='!'}
+      var el2=el.querySelector('.elapsed');if(el2){el2.textContent='超时';el2.style.color='var(--red)'}
+    })});
   // PDF→DWG
   evtSrc.addEventListener('pdf_task_start',function(e){var d=JSON.parse(e.data);switchTab('p2d');clearP2();$('p2Status').textContent=d.total+' 文件开始调度'});
   evtSrc.addEventListener('pdf_file_dispatch',function(e){var d=JSON.parse(e.data);addP2(d.file,'→ '+d.worker)});
@@ -714,18 +718,20 @@ function clearP(){$('pl').textContent=''}
 function addP(f,txt){
   var l=$('pl'),e=document.createElement('div');e.className='pitem';e.id='p-'+sid(f);
   e.innerHTML='<div class="sp"></div><div style="flex:1"><div class="pname">'+f+'</div><div class="det">'+txt+'</div></div><div class="elapsed"></div>';
-  l.appendChild(e);l.scrollTop=l.scrollHeight;
+  l.firstChild?l.insertBefore(e,l.firstChild):l.appendChild(e);
 }
 function updP(f,step,data){
   var e=$('p-'+sid(f));if(!e)return;
+  // 重试时重置为转圈状态
+  if(step&&step.indexOf('retry_')===0){e.classList.remove('ok','err');var sp=e.querySelector('.sp');if(sp){sp.style='';sp.className='sp'}}
   var dt=e.querySelector('.det');if(dt)dt.innerHTML='<span class="sbadge">'+(step||'...')+'</span>'+(data&&data.size_label?' '+data.size_label:'');
   if(data&&data.batch_index){var el=e.querySelector('.elapsed');if(el)el.textContent='['+data.batch_index+'/'+data.batch_total+']'}
 }
 function setOk(f,data){var e=$('p-'+sid(f));if(!e)return;e.classList.add('ok');var dt=e.querySelector('.det');if(dt)dt.textContent=data.pdf_count+' PDF';var el=e.querySelector('.elapsed');if(el)el.textContent=data.elapsed+'s'}
 function setErr(f,err){
   var e=$('p-'+sid(f));
-  if(!e){e=document.createElement('div');e.className='pitem err';e.id='p-'+sid(f);e.innerHTML='<div class="sp" style="border:none;background:var(--red);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-weight:700">!</div><div style="flex:1"><div class="pname">'+f+'</div><div class="det">'+err+'</div></div>';$('pl').appendChild(e)}
-  e.classList.add('err');var dt=e.querySelector('.det');if(dt)dt.textContent=err||'未知错误';
+  if(!e){e=document.createElement('div');e.className='pitem err';e.id='p-'+sid(f);e.innerHTML='<div class="sp" style="border:none;background:var(--red);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-weight:700">!</div><div style="flex:1"><div class="pname">'+f+'</div><div class="det">'+(err||'未知错误')+'</div></div><div class="elapsed" style="color:var(--red)">失败</div>';$('pl').appendChild(e)}
+  e.classList.add('err');var dt=e.querySelector('.det');if(dt)dt.textContent=err||'未知错误';var el=e.querySelector('.elapsed');if(el){el.textContent='失败';el.style.color='var(--red)'}
 }
 function showSt(d){
   $('stats').style.display='grid';
@@ -740,7 +746,7 @@ function clearP2(){$('pl2').textContent=''}
 function addP2(f,txt){
   var l=$('pl2'),e=document.createElement('div');e.className='pitem';e.id='p2-'+sid(f);
   e.innerHTML='<div class="sp"></div><div style="flex:1"><div class="pname">'+f+'</div><div class="det">'+txt+'</div></div><div class="elapsed"></div>';
-  l.appendChild(e);l.scrollTop=l.scrollHeight;
+  l.firstChild?l.insertBefore(e,l.firstChild):l.appendChild(e);
 }
 function setOkP2(f,data){
   var e=$('p2-'+sid(f));if(!e)return;e.classList.add('ok');
@@ -794,7 +800,7 @@ function loadCfg(){
     $('cTo').value=c.timeout||180;$('cKw').value=c.border_keywords||'';
     $('cWk').value=c.max_workers||4;
     $('cSplit').checked=c.split_borders!==false;$('cAuto').checked=c.auto_paper_size!==false;
-    $('cMerge').checked=c.merge_borders===true;$('cT3').checked=c.t3_mode!==false;
+    $('cMerge').checked=c.merge_borders===true;
     updSw();$('wk').textContent=$('cWk').value;
     loadCtbs(c.plot_style||'monochrome.ctb');
   });
@@ -803,12 +809,11 @@ $('bCfg').onclick=function(){
   fetch(API+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     printer:$('cPr').value,plot_style:$('cPs').value,timeout:parseInt($('cTo').value)||180,
     border_keywords:$('cKw').value,max_workers:parseInt($('cWk').value)||4,
-    split_borders:$('cSplit').checked,auto_paper_size:$('cAuto').checked,merge_borders:$('cMerge').checked,
-    t3_mode:$('cT3').checked
+    split_borders:$('cSplit').checked,auto_paper_size:$('cAuto').checked,merge_borders:$('cMerge').checked
   })}).then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){$('wk').textContent=$('cWk').value;toast('配置已保存')}});
 };
-function updSw(){$('lSplit').textContent=$('cSplit').checked?'开':'关';$('lAuto').textContent=$('cAuto').checked?'开':'关';$('lMerge').textContent=$('cMerge').checked?'开':'关';$('lT3').textContent=$('cT3').checked?'开':'关'}
-$('cSplit').onchange=updSw;$('cAuto').onchange=updSw;$('cMerge').onchange=updSw;$('cT3').onchange=updSw;
+function updSw(){$('lSplit').textContent=$('cSplit').checked?'开':'关';$('lAuto').textContent=$('cAuto').checked?'开':'关';$('lMerge').textContent=$('cMerge').checked?'开':'关'}
+$('cSplit').onchange=updSw;$('cAuto').onchange=updSw;$('cMerge').onchange=updSw;
 
 // Logs
 function loadLogs(){

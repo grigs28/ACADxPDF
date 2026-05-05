@@ -850,7 +850,6 @@ def convert_dwg(
     orientation: str = None,
     timeout: int = None,
     progress_callback=None,
-    t3_mode: bool = True,
     border_keywords: str = None,
 ) -> ConversionResult:
     """Convert a DWG file to PDF with optional border detection and splitting.
@@ -878,9 +877,7 @@ def convert_dwg(
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1 个 DWG = 1 个工作目录，所有操作共用
     work_dir = _create_work_dir()
-    use_acad = not t3_mode  # 非T3模式全走 acad.exe + 天正 ARX
 
     result = ConversionResult(dwg_path=dwg_path)
 
@@ -891,7 +888,7 @@ def convert_dwg(
         if split_borders:
             # Step 1: DWG → DXF
             _emit(progress_callback, "progress", {"step": "dwg_to_dxf", "file": os.path.basename(dwg_path)})
-            dxf_path = dwg_to_dxf(safe_dwg, work_dir, use_acad=use_acad)
+            dxf_path = dwg_to_dxf(safe_dwg, work_dir, use_acad=True)
             result.dxf_path = dxf_path
 
             # Step 2: Detect borders
@@ -917,8 +914,8 @@ def convert_dwg(
                 pdf_path = os.path.join(output_dir, pdf_name)
                 pdf_temp = os.path.join(work_dir, "_temp.pdf")
                 script = generate_plot_script(pdf_temp, ps, ori, printer, plot_style)
-                simple_timeout = 600 if use_acad else timeout
-                ok = run_conversion(safe_dwg, script, work_dir, simple_timeout, use_acad=use_acad)
+                simple_timeout = 600
+                ok = run_conversion(safe_dwg, script, work_dir, simple_timeout, use_acad=True)
                 if ok and os.path.exists(pdf_temp):
                     if os.path.exists(pdf_path):
                         os.remove(pdf_path)
@@ -997,12 +994,9 @@ def convert_dwg(
 
                 plot_commands += '(command "_.QUIT" "N")\n'
 
-                # 1 次 accoreconsole 生成所有 PDF
                 # acad.exe 按图框数量增加超时（每图框600秒）
-                plot_timeout = timeout
-                if use_acad:
-                    plot_timeout = 600 * len(groups)
-                ok = run_conversion(safe_dwg, plot_commands, target_dir, plot_timeout, use_acad=use_acad)
+                plot_timeout = 600 * len(groups)
+                ok = run_conversion(safe_dwg, plot_commands, target_dir, plot_timeout, use_acad=True)
 
                 all_ok = True
                 pdf_files = []
@@ -1033,8 +1027,8 @@ def convert_dwg(
             pdf_path = os.path.join(output_dir, pdf_name)
             pdf_temp = os.path.join(work_dir, "_temp.pdf")
             script = generate_plot_script(pdf_temp, ps, ori, printer, plot_style)
-            simple_timeout = 600 if use_acad else timeout
-            ok = run_conversion(safe_dwg, script, work_dir, simple_timeout, use_acad=use_acad)
+            simple_timeout = 600
+            ok = run_conversion(safe_dwg, script, work_dir, simple_timeout, use_acad=True)
             if ok and os.path.exists(pdf_temp):
                 if os.path.exists(pdf_path):
                     os.remove(pdf_path)
@@ -1106,7 +1100,7 @@ def convert_dwg_lsp(
     """使用 AutoPlot LSP 模块在 acad.exe 内完成 DWG→PDF 转换。
 
     流程：acad.exe 加载天正 ARX → 加载 autoplot.lsp → 加载配置 →
-    OPEN 目标 DWG → LSP 检测图框 + 匹配纸张 + 打印 PDF → CLOSE → QUIT
+    打开目标 DWG → LSP 检测图框 + 匹配纸张 + 打印 PDF → QUIT
     """
     printer = printer or DEFAULT_PRINTER
     plot_style = plot_style or DEFAULT_PLOT_STYLE
@@ -1172,8 +1166,11 @@ def convert_dwg_lsp(
             '(_log (strcat "doc=" (vla-get-Name _doc)))\n'
             '(ap:export-dxf)\n'
             '(_log "dxf_exported")\n'
-            '(setq _frames (ap:detect-all-frames))\n'
-            '(_log (strcat "frames=" (itoa (length (if _frames _frames (list nil))))))\n'
+            '(setq _detect-err nil)\n'
+            '(setq _frames (vl-catch-all-apply \'ap:detect-all-frames (list)))\n'
+            '(if (vl-catch-all-error-p _frames)\n'
+            '  (progn (_log (strcat "detect_error: " (vl-catch-all-error-message _frames))) (setq _frames nil))\n'
+            '  (_log (strcat "frames=" (itoa (length (if _frames _frames (list nil)))))))\n'
             '(if _frames\n'
             '  (progn\n'
             '    (setq _output-dir (ap:get-config-default "output-directory" "./PDF_Output"))\n'
@@ -1188,21 +1185,20 @@ def convert_dwg_lsp(
 
         _emit(progress_callback, "progress", {"step": "lsp_convert", "file": os.path.basename(dwg_path)})
 
-        # 执行 acad.exe：/ld 加载天正 ARX → 直接打开目标 DWG → /b 执行脚本
+        # 构建 acad.exe 命令行：/ld 加载天正 ARX → 直接打开目标 DWG → /b 执行脚本
         scr_path = os.path.join(work_dir, "autoplot.scr")
         with open(scr_path, "w", encoding="utf-8-sig") as f:
             f.write(script)
 
-        # 手动构建命令行：acad.exe /nologo /ld arx target.dwg /b script.scr
         cmd = [ACAD_EXE, "/nologo"]
         if os.path.exists(TARCH_ARX):
             cmd += ["/ld", _to_native_path(TARCH_ARX)]
-        cmd.append(_to_native_path(safe_dwg))  # 目标 DWG 直接打开
+        cmd.append(_to_native_path(safe_dwg))
         cmd.append("/b")
         cmd.append(_to_native_path(scr_path))
         print(f"[LSP CMD] {' '.join(cmd)}", file=sys.stderr)
-        # 不使用 PIPE 重定向 stdout/stderr，避免 acad.exe 检测到非控制台环境后自动打开 PDF
-        proc = subprocess.Popen(cmd)
+        stderr_log = open(os.path.join(work_dir, "acad_stderr.log"), "w", encoding="utf-8")
+        proc = subprocess.Popen(cmd, stderr=stderr_log)
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:

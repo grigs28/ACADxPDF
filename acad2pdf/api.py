@@ -22,7 +22,6 @@ import threading
 import time
 import uuid
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -39,6 +38,7 @@ from .converter import (
     BORDER_KEYWORDS,
     WORK_DIR,
 )
+from .task_store import store
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -79,21 +79,13 @@ runtime_config = {
     "auto_paper_size": True,
     "split_borders": True,
     "max_workers": MAX_WORKERS,
-    "t3_mode": True,
     "drawing_scale": 1.0,
     "drawing_scales": [1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 500, 1000],
 }
 
-# --- Task store: task_id -> {status, files, results, zip_path, ...} ---
-_tasks: dict[str, dict] = {}
-_tasks_lock = threading.Lock()
-
 # --- SSE ---
 _sse_queues: dict[str, queue.Queue] = {}
 _sse_lock = threading.Lock()
-
-# --- Thread pool ---
-_executor = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="acad2pdf")
 
 # --- Logging ---
 log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
@@ -127,15 +119,6 @@ def _sse_broadcast(event: str, data: dict):
                 dead.append(sid)
         for sid in dead:
             _sse_queues.pop(sid, None)
-
-
-def _progress_cb(task_id: str, filename: str):
-    def cb(event: str, data: dict):
-        data["task_id"] = task_id
-        data["file"] = data.get("file", filename)
-        _sse_broadcast(event, data)
-        log.info("[T:%s] [%s] %s", task_id[:6], event, json.dumps(data, ensure_ascii=False))
-    return cb
 
 
 # ===================== Routes =====================
@@ -237,188 +220,58 @@ def convert():
     if not dwg_files:
         return jsonify({"error": "no DWG files"}), 400
 
-    merge = request.form.get("merge", "false").lower() == "true"
-    max_workers = int(request.form.get("workers", runtime_config["max_workers"]))
-
-    # 可选参数：空值则使用 runtime_config 默认值
     plot_style = request.form.get("plot_style", "").strip() or runtime_config["plot_style"]
     border_kw = request.form.get("border_keywords", "").strip() or runtime_config["border_keywords"]
 
-    task_id = uuid.uuid4().hex[:12]
-
-    # 上传文件保存到 Windows 文件系统（如果 WORK_DIR 配置了）
-    # 这样 accoreconsole 才能访问
     project_dir = os.path.dirname(os.path.dirname(__file__))
-    if WORK_DIR:
-        task_dir = os.path.join(WORK_DIR, task_id)
-    else:
-        task_dir = os.path.join(project_dir, "output", task_id)
-    os.makedirs(task_dir, exist_ok=True)
+    task_id = uuid.uuid4().hex[:12]
+    results_dir = os.path.join(
+        WORK_DIR or os.path.join(project_dir, "output"), task_id)
+    task = store.create_task("dwg2pdf", {
+        "printer": runtime_config["printer"],
+        "plot_style": plot_style,
+        "border_keywords": border_kw,
+        "plot_scale": "Fit",
+        "drawing_scale": runtime_config.get("drawing_scale", 1.0),
+    }, results_dir=results_dir)
 
-    # Save uploaded files (sanitize filenames)
-    saved = []
+    upload_dir = os.path.join(results_dir, "upload")
+    os.makedirs(upload_dir, exist_ok=True)
+
     for f in dwg_files:
         safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.dwg"
-        p = os.path.join(task_dir, safe_name)
-        f.save(p)
-        saved.append((f.filename, p))
+        path = os.path.join(upload_dir, safe_name)
+        f.save(path)
+        task.add_file(f.filename, path)
 
-    task = {
-        "id": task_id,
-        "status": "running",
-        "total": len(saved),
-        "files": [s[0] for s in saved],
-        "results": [],
-        "zip_path": "",
-        "start_time": time.time(),
-        "end_time": 0,
-        "workers": max_workers,
-    }
-    with _tasks_lock:
-        _tasks[task_id] = task
+    store.start_task(task)
 
-    _sse_broadcast("task_start", {"task_id": task_id, "total": len(saved), "workers": max_workers})
-    log.info("Task %s: %d files, %d workers, merge=%s", task_id, len(saved), max_workers, merge)
+    _sse_broadcast("task_start", {"task_id": task.id, "total": task.total,
+                                    "workers": runtime_config["max_workers"]})
+    log.info("Task %s: %d DWG files queued", task.id, task.total)
 
-    # Submit to thread pool
-    def _do_convert(filename, dwg_path):
-        t0 = time.time()
-        # 用原始文件名建输出子目录
-        orig_stem = Path(filename).stem
-        safe_stem = Path(dwg_path).stem
-        per_output_dir = os.path.join(task_dir, orig_stem)
-        os.makedirs(per_output_dir, exist_ok=True)
-        # 复制原始 DWG 到输出子目录（用原始文件名）
-        shutil.copy2(dwg_path, os.path.join(per_output_dir, filename))
-        cb = _progress_cb(task_id, filename)
-        _sse_broadcast("file_start", {"task_id": task_id, "file": filename})
-        try:
-            r = convert_dwg_lsp(
-                dwg_path, per_output_dir,
-                printer=runtime_config["printer"],
-                plot_style=plot_style,
-                border_keywords=border_kw,
-                plot_scale="Fit",
-                drawing_scale=runtime_config.get("drawing_scale", 1.0),
-                timeout=runtime_config["timeout"],
-                progress_callback=cb,
-            )
-        except Exception as ex:
-            r = ConversionResult(dwg_path=dwg_path, error=str(ex), elapsed=time.time() - t0)
-            log.error("Task %s: convert exception for %s: %s", task_id[:6], filename, ex)
-
-        # LSP 用安全文件名生成 PDF/DXF，重命名为原始文件名
-        if r.success and safe_stem != orig_stem:
-            for f in os.listdir(per_output_dir):
-                if f.startswith(safe_stem):
-                    new_name = f.replace(safe_stem, orig_stem, 1)
-                    os.rename(
-                        os.path.join(per_output_dir, f),
-                        os.path.join(per_output_dir, new_name))
-
-        elapsed = time.time() - t0
-        pdf_count = len(r.borders) if r.borders else (1 if r.success else 0)
-        _sse_broadcast("file_done", {
-            "task_id": task_id, "file": filename,
-            "success": r.success, "pdf_count": pdf_count,
-            "elapsed": round(elapsed, 1), "error": r.error,
-        })
-        log.info("Task %s: %s %s (%.1fs, %d PDFs)", task_id[:6],
-                 "OK" if r.success else "FAIL", filename, elapsed, pdf_count)
-        return {"file": filename, "success": r.success, "error": r.error,
-                "pdf_count": pdf_count, "elapsed": round(elapsed, 1),
-                "dwg_path": dwg_path,
-                "borders": [{"name": b.name, "size_label": b.size_label,
-                             "width_mm": round(b.paper_width_mm), "height_mm": round(b.paper_height_mm)}
-                            for b in (r.borders or [])]}
-
-    futures = []
-    for filename, dwg_path in saved:
-        ft = _executor.submit(_do_convert, filename, dwg_path)
-        futures.append(ft)
-
-    # Collect results in background, then build ZIP
-    def _collect():
-        results = []
-        for ft in futures:
-            try:
-                results.append(ft.result())
-            except Exception as ex:
-                results.append({"file": "?", "success": False, "error": str(ex),
-                                "pdf_count": 0, "elapsed": 0, "borders": [], "dwg_path": ""})
-
-        # Build per-DWG ZIPs, then a master ZIP
-        master_zip_path = os.path.join(task_dir, "result.zip")
-        with zipfile.ZipFile(master_zip_path, "w", zipfile.ZIP_DEFLATED) as master_zf:
-            for r in results:
-                if not r["success"]:
-                    continue
-                orig_stem = Path(r["file"]).stem
-                per_output_dir = os.path.join(task_dir, orig_stem)
-                if not os.path.isdir(per_output_dir):
-                    continue
-                # 所有文件放入 <orig_stem>/ 子目录
-                for name in sorted(os.listdir(per_output_dir)):
-                    if name.lower().endswith((".pdf", ".dxf", ".dwg")):
-                        master_zf.write(os.path.join(per_output_dir, name), f"{orig_stem}/{name}")
-
-        total_time = time.time() - task["start_time"]
-        ok_count = sum(1 for r in results if r["success"])
-        total_pdfs = sum(r["pdf_count"] for r in results)
-
-        with _tasks_lock:
-            task["status"] = "done"
-            task["results"] = results
-            task["zip_path"] = master_zip_path
-            task["end_time"] = time.time()
-            task["total_time"] = round(total_time, 1)
-            task["ok_count"] = ok_count
-            task["total_pdfs"] = total_pdfs
-            task["zip_size_kb"] = round(os.path.getsize(master_zip_path) / 1024, 1)
-
-        _sse_broadcast("task_done", {
-            "task_id": task_id, "total_time": round(total_time, 1),
-            "ok_count": ok_count, "total": len(results),
-            "total_pdfs": total_pdfs, "workers": max_workers,
-            "zip_size_kb": task["zip_size_kb"],
-        })
-        log.info("Task %s done: %d/%d OK, %d PDFs, %.1fs (%d workers)",
-                 task_id, ok_count, len(results), total_pdfs, total_time, max_workers)
-
-    threading.Thread(target=_collect, daemon=True).start()
-
-    return jsonify({"task_id": task_id, "status": "running",
-                     "total": len(saved), "workers": max_workers})
+    return jsonify({"task_id": task.id, "status": "running", "total": task.total})
 
 
 @app.route("/task/<task_id>")
 def get_task(task_id):
-    with _tasks_lock:
-        task = _tasks.get(task_id)
+    task = store.get_task(task_id)
     if not task:
         return jsonify({"error": "task not found"}), 404
-    out = {k: v for k, v in task.items() if k != "zip_path"}
-    return jsonify(out)
+    return jsonify(task.to_dict())
 
 
 @app.route("/download/<task_id>")
 def download(task_id):
-    with _tasks_lock:
-        task = _tasks.get(task_id)
-    if not task or not task.get("zip_path") or not os.path.exists(task["zip_path"]):
+    task = store.get_task(task_id)
+    if not task or not task.zip_path or not os.path.exists(task.zip_path):
         return jsonify({"error": "no result"}), 404
-    return send_file(task["zip_path"], as_attachment=True, download_name=f"{task_id}.zip")
+    return send_file(task.zip_path, as_attachment=True, download_name=f"{task_id}.zip")
 
 
 @app.route("/tasks")
 def list_tasks():
-    with _tasks_lock:
-        out = []
-        for tid, t in _tasks.items():
-            out.append({"id": tid, "status": t["status"], "total": t["total"],
-                        "ok_count": t.get("ok_count", 0), "total_time": t.get("total_time", 0),
-                        "workers": t.get("workers", 0)})
-    return jsonify(out)
+    return jsonify(store.list_tasks())
 
 
 @app.route("/plot-styles", methods=["GET"])
@@ -471,8 +324,7 @@ def update_config():
         return jsonify({"error": "请先登录"}), 401
     data = request.get_json(force=True)
     allowed = {"printer", "plot_style", "timeout", "border_keywords",
-               "merge_borders", "auto_paper_size", "split_borders", "max_workers",
-               "t3_mode"}
+               "merge_borders", "auto_paper_size", "split_borders", "max_workers"}
     updated = {}
     for k, v in data.items():
         if k in allowed:
@@ -480,7 +332,7 @@ def update_config():
                 v = int(v)
             elif k == "max_workers":
                 v = max(1, int(v))
-            elif k in ("merge_borders", "auto_paper_size", "split_borders", "t3_mode"):
+            elif k in ("merge_borders", "auto_paper_size", "split_borders"):
                 v = bool(v)
             runtime_config[k] = v
             updated[k] = v
@@ -655,26 +507,13 @@ def health():
     return jsonify({"status": "ok", "workers": runtime_config["max_workers"]})
 
 
-# --- Task reaper: clean up tasks older than 1 hour ---
-_TASK_TTL = 3600
-
-
-def _reap_tasks():
+def _maintenance_loop():
     while True:
         time.sleep(300)
-        now = time.time()
-        with _tasks_lock:
-            expired = [tid for tid, t in _tasks.items()
-                       if t["status"] == "done" and now - t.get("end_time", now) > _TASK_TTL]
-            for tid in expired:
-                task = _tasks.pop(tid)
-                work_dir = os.path.dirname(task.get("zip_path", ""))
-                if work_dir:
-                    shutil.rmtree(work_dir, ignore_errors=True)
-                log.info("Reaped task %s", tid)
+        store.reap_old_tasks()
+        store.recover_stale()
 
-
-threading.Thread(target=_reap_tasks, daemon=True).start()
+threading.Thread(target=_maintenance_loop, daemon=True).start()
 
 
 if __name__ == "__main__":

@@ -6,18 +6,83 @@
 ;;; ------------------------------------------------------------
 ;;; 图框记录构造与访问
 ;;; ------------------------------------------------------------
-(defun ap:make-frame-record (ent ftype block-name layout bounds / actual-bounds obj minpt maxpt min-list max-list)
+(defun ap:block-has-tch (blk-name / blk ent)
+  (setq blk (tblsearch "BLOCK" blk-name))
+  (if blk
+    (progn
+      (setq ent (cdr (assoc -2 blk)))
+      (while ent
+        (if (wcmatch (cdr (assoc 0 (entget ent))) "TCH_*,ACAD_TABLE")
+          (progn (setq ent nil) T)
+          (setq ent (entnext ent)))))))
+
+(defun ap:insert-bounds-entget (ent / ed ins sx sy blk-name blk et
+                                ent2 ed2 p pts mn-x mn-y mx-x mx-y)
+  ;; Compute INSERT bounds from block definition via entget (no VLA)
+  (setq ed (entget ent))
+  (setq ins (cdr (assoc 10 ed)))
+  (setq sx (cdr (assoc 41 ed)))
+  (setq sy (cdr (assoc 42 ed)))
+  (setq blk-name (cdr (assoc 2 ed)))
+  (if (null sx) (setq sx 1.0))
+  (if (null sy) (setq sy 1.0))
+  (setq blk (tblsearch "BLOCK" blk-name))
+  (if (null blk) nil
+    (progn
+      (setq mn-x 1e20 mn-y 1e20 mx-x -1e20 mx-y -1e20)
+      (setq ent2 (cdr (assoc -2 blk)))
+      (setq pts nil)
+      (while ent2
+        (setq ed2 (entget ent2))
+        (setq et (cdr (assoc 0 ed2)))
+        (cond
+          ((= et "LINE")
+           (setq p (cdr (assoc 10 ed2)))
+           (setq pts (cons p pts))
+           (setq p (cdr (assoc 11 ed2)))
+           (setq pts (cons p pts)))
+          ((= et "LWPOLYLINE")
+           (foreach item ed2
+             (if (= (car item) 10) (setq pts (cons (cdr item) pts)))))
+          ((= et "INSERT")
+           (setq p (list 0.0 0.0))
+           (setq pts (cons p pts))))
+        (setq ent2 (entnext ent2)))
+      (if (null pts) nil
+        (progn
+          (foreach p pts
+            (setq mn-x (min mn-x (car p)) mn-y (min mn-y (cadr p))
+                  mx-x (max mx-x (car p)) mx-y (max mx-y (cadr p))))
+          (list
+            (list (+ (* mn-x sx) (car ins)) (+ (* mn-y sy) (cadr ins)))
+            (list (+ (* mx-x sx) (car ins)) (+ (* mx-y sy) (cadr ins)))))))))
+
+(defun ap:make-frame-record (ent ftype block-name layout bounds / actual-bounds
+                            obj minpt maxpt min-list max-list bb-result
+                            etype ed blk-name has-tch)
   (if bounds
     (setq actual-bounds bounds)
     (progn
-      (setq obj (vlax-ename->vla-object ent))
-      (setq minpt nil maxpt nil)
-      (vla-GetBoundingBox obj 'minpt 'maxpt)
-      (setq min-list (vlax-safearray->list minpt)
-            max-list (vlax-safearray->list maxpt))
-      (if (and min-list max-list)
-        (setq actual-bounds (list min-list max-list))
-        (setq actual-bounds nil))))
+      (setq ed (entget ent))
+      (setq etype (cdr (assoc 0 ed)))
+      (cond
+        ;; INSERT with TCH entities: use entget fallback
+        ((and (= etype "INSERT")
+              (setq blk-name (cdr (assoc 2 ed)))
+              (ap:block-has-tch blk-name))
+         (setq actual-bounds (ap:insert-bounds-entget ent)))
+        ;; Other entities: try vla-GetBoundingBox
+        (T
+          (setq obj (vlax-ename->vla-object ent))
+          (setq minpt nil maxpt nil)
+          (setq bb-result (vl-catch-all-apply
+            '(lambda ()
+              (vla-GetBoundingBox obj 'minpt 'maxpt)
+              (list (vlax-safearray->list minpt)
+                    (vlax-safearray->list maxpt)))))
+          (if (vl-catch-all-error-p bb-result)
+            (setq actual-bounds nil)
+            (setq actual-bounds bb-result))))))
   (if (null actual-bounds)
     nil
     (list
@@ -28,6 +93,7 @@
       (cons "bounds" actual-bounds)
       (cons "paper-match" nil)
       (cons "orientation" nil))))
+
 
 ;;; ------------------------------------------------------------
 ;;; 模型空间块名搜索
@@ -263,12 +329,13 @@
                                     p1 p2 dx dy eps
                                     xvals yvals found
                                     xi xj yi yj area min-area
-                                    bounds rec result)
+                                    bounds rec result combo-max)
   (setq eps 1.0)
   (setq min-area (ap:get-config-default "rect-min-area" 50000))
+  (setq combo-max 100000000)
   (setq ss (ssget "_X" (list (cons 0 "LINE"))))
   (setq h-lines nil v-lines nil result nil)
-    (if (null ss) nil
+  (if (null ss) nil
     (progn
       (setq i 0)
       (repeat (sslength ss)
@@ -292,30 +359,35 @@
         (setq found nil)
         (foreach y yvals (if (< (abs (- (cadr h) y)) eps) (setq found T)))
         (if (null found) (setq yvals (cons (cadr h) yvals))))
-      (foreach xi xvals
-        (foreach xj xvals
-          (if (< xi xj)
-            (foreach yi yvals
-              (foreach yj yvals
-                (if (< yi yj)
-                  (progn
-                    (setq area (* (- xj xi) (- yj yi)))
-                    (if (and (>= area min-area)
-                             (ap:has-hline h-lines yi xi xj eps)
-                             (ap:has-hline h-lines yj xi xj eps)
-                             (ap:has-vline v-lines xi yi yj eps)
-                             (ap:has-vline v-lines xj yi yj eps))
+      (if (> (* (length xvals) (length yvals) (length xvals) (length yvals)) combo-max)
+        (progn
+          (princ (strcat "[LINE] skip: x=" (itoa (length xvals)) " y=" (itoa (length yvals))))
+          (setq result nil))
+        (progn
+          (foreach xi xvals
+            (foreach xj xvals
+              (if (< xi xj)
+                (foreach yi yvals
+                  (foreach yj yvals
+                    (if (< yi yj)
                       (progn
-                        (setq bounds (list (list xi yi) (list xj yj)))
-                        (setq rec (list
-                          (cons "entity" (ssname ss 0))
-                          (cons "type" "RECTANGLE")
-                          (cons "block-name" nil)
-                          (cons "layout" "Model")
-                          (cons "bounds" bounds)
-                          (cons "paper-match" nil)
-                          (cons "orientation" nil)))
-                        (setq result (cons rec result)))))))))
+                        (setq area (* (- xj xi) (- yj yi)))
+                        (if (and (>= area min-area)
+                                 (ap:has-hline h-lines yi xi xj eps)
+                                 (ap:has-hline h-lines yj xi xj eps)
+                                 (ap:has-vline v-lines xi yi yj eps)
+                                 (ap:has-vline v-lines xj yi yj eps))
+                          (progn
+                            (setq bounds (list (list xi yi) (list xj yj)))
+                            (setq rec (list
+                              (cons "entity" (ssname ss 0))
+                              (cons "type" "RECTANGLE")
+                              (cons "block-name" nil)
+                              (cons "layout" "Model")
+                              (cons "bounds" bounds)
+                              (cons "paper-match" nil)
+                              (cons "orientation" nil)))
+                            (setq result (cons rec result)))))))))))
       result)))))
 
 ;;; ------------------------------------------------------------
@@ -428,44 +500,55 @@
   (setq frames nil)
 
   ;; 1. 模型空间块名搜索
+  (_log "detect:step1_start")
   (setq block-result (ap:search-blocks-model block-names))
+  (_log (strcat "detect:step1_done blocks=" (itoa (length block-result))))
 
   ;; 2. 增强搜索（含动态块）
+  (_log "detect:step2_start")
   (setq enhanced (ap:search-blocks-enhanced block-names))
   (if enhanced
     (setq block-result (append block-result enhanced)))
+  (_log (strcat "detect:step2_done total=" (itoa (length block-result))))
 
   ;; 3. 图纸空间搜索
+  (_log "detect:step3_start")
   (setq paper-result (ap:search-blocks-paper block-names))
   (if paper-result
     (setq block-result (append block-result paper-result)))
+  (_log (strcat "detect:step3_done total=" (itoa (length block-result))))
 
   ;; 4. 合并块搜索结果
   (setq frames block-result)
 
-  ;; 5. LINE矩形补充检测
-  (setq line-result (vl-catch-all-apply 'ap:detect-line-rectangles (list)))
-  (if (vl-catch-all-error-p line-result)
-    (princ (strcat "\n  [DEBUG] LINE检测错误: " (vl-catch-all-error-message line-result)))
+  ;; 5. LINE矩形补充检测 — 仅在未找到块图框时执行
+  ;;    ssget "_X" LINE 在 TCH ARX 环境下可能卡死，有块结果时跳过
+  (if (> (length frames) 0)
+    (_log "detect:step5_skip (blocks already found)")
     (progn
-      (princ (strcat "\n  [DEBUG] LINE检测结果: " (itoa (length line-result)) " 个"))
-      ;; 过滤：排除与块检测区域重叠的矩形
-      (setq line-filtered nil)
-      (foreach lr line-result
-        (setq keep T)
-        (setq lr-b (vl-catch-all-apply 'ap:frame-get (list lr "bounds")))
-        (if (and block-result lr-b (not (vl-catch-all-error-p lr-b)))
-          (foreach br block-result
-            (setq br-b (vl-catch-all-apply 'ap:frame-get (list br "bounds")))
-            (if (and br-b (not (vl-catch-all-error-p br-b)))
-              (if (>= (ap:overlap-ratio lr-b br-b) 0.5)
-                (setq keep nil)))))
-        (if keep
-          (setq line-filtered (cons lr line-filtered))))
-      (if line-filtered
+      (_log "detect:step5_start")
+      (setq line-result (vl-catch-all-apply 'ap:detect-line-rectangles (list)))
+      (if (vl-catch-all-error-p line-result)
+        (princ (strcat "\n  [DEBUG] LINE检测错误: " (vl-catch-all-error-message line-result)))
         (progn
-          (princ (strcat "\n  LINE矩形: " (itoa (length line-filtered)) " 个"))
-          (setq frames (append frames (reverse line-filtered)))))))
+          (princ (strcat "\n  [DEBUG] LINE检测结果: " (itoa (length line-result)) " 个"))
+          ;; 过滤：排除与块检测区域重叠的矩形
+          (setq line-filtered nil)
+          (foreach lr line-result
+            (setq keep T)
+            (setq lr-b (vl-catch-all-apply 'ap:frame-get (list lr "bounds")))
+            (if (and block-result lr-b (not (vl-catch-all-error-p lr-b)))
+              (foreach br block-result
+                (setq br-b (vl-catch-all-apply 'ap:frame-get (list br "bounds")))
+                (if (and br-b (not (vl-catch-all-error-p br-b)))
+                  (if (>= (ap:overlap-ratio lr-b br-b) 0.5)
+                    (setq keep nil)))))
+            (if keep
+              (setq line-filtered (cons lr line-filtered))))
+          (if line-filtered
+            (progn
+              (princ (strcat "\n  LINE矩形: " (itoa (length line-filtered)) " 个"))
+              (setq frames (append frames (reverse line-filtered)))))))))
 
   ;; 6. 去重、排序
   (if frames
