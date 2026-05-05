@@ -1066,50 +1066,10 @@ LSP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PLOT_STYLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plot_styles")
 
 
-def _ensure_pc3_no_viewer(printer_name: str):
-    """确保 AutoCAD Plotters 目录下指定 PC3 的 View_New_File=false。
-
-    acad.exe /b 模式可能不加载用户 Profile，使用默认 PC3（View_New_File 默认 true），
-    导致打印后自动打开 PDF。此函数直接修改用户 Plotters 目录下的 PC3 文件。
-    """
-    plotters_dir = os.path.join(
-        os.environ.get("APPDATA", ""),
-        "Autodesk", "AutoCAD 2026", "R25.1", "chs", "Plotters")
-    pc3_path = os.path.join(plotters_dir, printer_name)
-    if not os.path.isfile(pc3_path):
-        return
-
-    try:
-        with open(pc3_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception:
-        return
-
-    if "View_New_File" in content:
-        # 已有该字段，确保为 false
-        import re
-        content = re.sub(
-            r'("name"\s*:\s*"View_New_File"\s*,?\s*"value"\s*:\s*)true',
-            r'\1false', content)
-    else:
-        # JSON 格式 PC3，添加 View_New_File=false
-        # 找到 "1" : { "name" : "Create_Bookmarks" ... } 后面插入
-        import re
-        insert = '\n   {\n    "name" : "View_New_File",\n    "value" : false\n   }'
-        # 在 custom 块的最后一个条目后插入
-        content = re.sub(
-            r'("name"\s*:\s*"Custom_Gradient_Resolution".*?"value"\s*:\s*(?:true|false)\s*\})',
-            r'\1,' + insert, content)
-
-    try:
-        with open(pc3_path, "w", encoding="utf-8") as f:
-            f.write(content)
-    except Exception:
-        pass
-
 
 def _generate_lsp_env(output_dir_win: str, printer: str, plot_style: str,
-                       border_keywords: str, plot_scale: str = "Fit") -> str:
+                       border_keywords: str, plot_scale: str = "Fit",
+                       drawing_scale: float = 1.0) -> str:
     """生成 autopilot.env 配置内容。"""
     keywords = [k.strip() for k in border_keywords.split(",") if k.strip()]
     block_names = " ".join(f'"{k}"' for k in keywords) if keywords else '"TK" "TUKUANG" "BORDER"'
@@ -1125,8 +1085,8 @@ def _generate_lsp_env(output_dir_win: str, printer: str, plot_style: str,
         f'  ("plot-style" . "{plot_style}")\n'
         f'  ("plot-device" . "{printer}")\n'
         f'  ("plot-scale" . "{plot_scale}")\n'
+        f'  ("drawing-scale" . {drawing_scale})\n'
         '  ("plot-margin" . 0.0)\n'
-        '  ("mediastep" . 100)\n'
         '  ("export-dxf" . T)\n'
         ')\n'
     )
@@ -1139,6 +1099,7 @@ def convert_dwg_lsp(
     plot_style: str = None,
     border_keywords: str = None,
     plot_scale: str = "Fit",
+    drawing_scale: float = 1.0,
     timeout: int = 600,
     progress_callback=None,
 ) -> ConversionResult:
@@ -1177,10 +1138,7 @@ def convert_dwg_lsp(
         if os.path.isfile(ctb_src):
             shutil.copy2(ctb_src, os.path.join(work_dir, plot_style))
 
-        # 确保 AutoCAD Plotters 目录的 PC3 有 View_New_File=false（禁止打印后自动打开 PDF）
-        _ensure_pc3_no_viewer(printer)
-
-        env_content = _generate_lsp_env(output_win, printer, plot_style, border_keywords, plot_scale)
+        env_content = _generate_lsp_env(output_win, printer, plot_style, border_keywords, plot_scale, drawing_scale)
         env_path = os.path.join(work_dir, "autoplot.env")
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
@@ -1198,7 +1156,7 @@ def convert_dwg_lsp(
             '(setvar "CMDECHO" 0)\n'
             '(setvar "EXPERT" 5)\n'
             '(setvar "SECURELOAD" 0)\n'
-            '(setvar "BACKGROUNDPLOT" 2)\n'
+            '(setvar "BACKGROUNDPLOT" 0)\n'
             '(setvar "PUBLISHCOLLATE" 0)\n'
             '(setenv "AutoViewPDFInPDFViewer" "0")\n'
             f'(setq _lf (open "{log_fwd}" "w"))\n'
@@ -1289,13 +1247,7 @@ def convert_dwg_lsp(
                 "success": True,
             })
         else:
-            # 检查 acad.exe 输出找错误原因
-            err_msg = ""
-            if stdout:
-                for line in stdout.decode("gbk", errors="replace").splitlines():
-                    if "error" in line.lower() or "错误" in line or "失败" in line:
-                        err_msg = line.strip()
-            result.error = err_msg or "LSP conversion produced no PDF output"
+            result.error = "LSP conversion produced no PDF output"
 
     except Exception as ex:
         result.error = str(ex)

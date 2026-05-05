@@ -416,6 +416,8 @@ header{
           <div id="mCtbList" style="max-height:200px;overflow-y:auto;margin-bottom:8px"></div>
           <button class="btn bs" style="font-size:12px;padding:4px 12px" onclick="$('fAdmCtb').click()">上传 CTB</button>
           <input type="file" id="fAdmCtb" accept=".ctb" style="display:none">
+          <label style="display:block;margin:16px 0 8px;font-size:12px;color:var(--text2)">临时文件清理</label>
+          <button class="btn" style="font-size:12px;padding:4px 12px;background:var(--danger);color:#fff;border:none" onclick="cleanWork()">清空 _work + output</button>
         </div>
       </div>
     </div>
@@ -564,6 +566,13 @@ window.saveAdmin=function(){
   fetch(API+'/admin/config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
   .then(function(r){return r.json()}).then(function(r){
     if(r.status==='ok'){closeAdmin();toast('配置已保存')}else{alert(r.error||'保存失败')}
+  });
+};
+window.cleanWork=function(){
+  if(!confirm('确认清空 _work 和 output 目录？'))return;
+  fetch(API+'/admin/clean',{method:'POST',credentials:'same-origin'})
+  .then(function(r){return r.json()}).then(function(r){
+    toast(r.status==='ok'?'已清理: '+r.detail:r.error);
   });
 };
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}

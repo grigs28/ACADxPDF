@@ -59,7 +59,15 @@
     nil
     (vl-catch-all-apply 'vla-get-EffectiveName (list obj))))
 
-(defun ap:search-blocks-enhanced (block-names / ss-all result i ent eff-name rec)
+(defun ap:match-block-name (name patterns / p)
+  ;; 用通配符模式列表匹配块名，返回匹配的模式或 nil
+  (setq p nil)
+  (foreach pat patterns
+    (if (and (null p) (wcmatch name pat))
+      (setq p pat)))
+  p)
+
+(defun ap:search-blocks-enhanced (block-names / ss-all result i ent eff-name matched rec)
   (setq ss-all (ssget "_X" '((0 . "INSERT"))))
   (if ss-all
     (progn
@@ -67,11 +75,13 @@
       (repeat (sslength ss-all)
         (setq ent (ssname ss-all i))
         (setq eff-name (ap:get-effective-name ent))
-        (if (and eff-name
-                 (vl-position eff-name block-names))
+        (if eff-name
           (progn
-            (setq rec (ap:make-frame-record ent "BLOCK" eff-name "Model" nil))
-            (if rec (setq result (cons rec result)))))
+            (setq matched (ap:match-block-name eff-name block-names))
+            (if matched
+              (progn
+                (setq rec (ap:make-frame-record ent "BLOCK" eff-name "Model" nil))
+                (if rec (setq result (cons rec result)))))))
         (setq i (1+ i)))
       result)
     nil))
@@ -166,6 +176,147 @@
                   (setq frames (cons rec frames)))))))
         (setq i (1+ i)))))
   frames)
+
+;;; ------------------------------------------------------------
+;;; LINE 矩形检测（4条LINE组成的封闭矩形）
+;;; ------------------------------------------------------------
+
+;;; 浮点近似相等
+(defun ap:fp-close (a b / eps)
+  (setq eps 0.5)
+  (< (abs (- a b)) eps))
+
+;;; 获取LINE端点列表 ((x1 y1) (x2 y2))
+(defun ap:line-endpoints (ent / p1 p2)
+  (setq p1 (cdr (assoc 10 (entget ent))))
+  (setq p2 (cdr (assoc 11 (entget ent))))
+  (list (list (car p1) (cadr p1))
+        (list (car p2) (cadr p2))))
+
+;;; 检查两个点是否近似重合
+(defun ap:pt-match (a b)
+  (and (ap:fp-close (car a) (car b))
+       (ap:fp-close (cadr a) (cadr b))))
+
+;;; 从LINE端点列表中聚类提取唯一角点
+(defun ap:collect-corner-pts (lines / pts clusters c p found)
+  (setq pts nil)
+  (foreach ln lines
+    (setq pts (cons (car ln) pts))
+    (setq pts (cons (cadr ln) pts)))
+  (setq clusters nil)
+  (foreach p pts
+    (setq found nil)
+    (foreach c clusters
+      (if (ap:pt-match p (car c))
+        (setq found T)))
+    (if (null found)
+      (setq clusters (cons (list p) clusters))))
+  (mapcar 'car clusters))
+
+;;; 给定4个角点按矩形排列(bl br tr tl), 检查4条边是否都在lines中存在
+(defun ap:edges-exist (corners lines / c1 c2 c3 c4 found n edge)
+  (setq c1 (nth 0 corners)
+        c2 (nth 1 corners)
+        c3 (nth 2 corners)
+        c4 (nth 3 corners))
+  (setq n 0)
+  (foreach edge (list (list c1 c2) (list c2 c3) (list c3 c4) (list c4 c1))
+    (setq found nil)
+    (foreach ln lines
+      (if (or (and (ap:pt-match (car edge) (car ln))
+                   (ap:pt-match (cadr edge) (cadr ln)))
+              (and (ap:pt-match (car edge) (cadr ln))
+                   (ap:pt-match (cadr edge) (car ln))))
+        (setq found T)))
+    (if found (setq n (1+ n))))
+  (= n 4))
+
+;;; 检查指定位置是否存在水平线段
+(defun ap:has-hline (h-lines y x1 x2 eps / found h)
+  (setq found nil)
+  (foreach h h-lines
+    (if (and (null found)
+             (< (abs (- (cadr h) y)) eps)
+             (or (and (< (abs (- (car h) x1)) eps)
+                      (< (abs (- (nth 2 h) x2)) eps))
+                 (and (< (abs (- (car h) x2)) eps)
+                      (< (abs (- (nth 2 h) x1)) eps))))
+      (setq found T)))
+  found)
+
+;;; 检查指定位置是否存在垂直线段
+(defun ap:has-vline (v-lines x y1 y2 eps / found v)
+  (setq found nil)
+  (foreach v v-lines
+    (if (and (null found)
+             (< (abs (- (car v) x)) eps)
+             (or (and (< (abs (- (cadr v) y1)) eps)
+                      (< (abs (- (nth 2 v) y2)) eps))
+                 (and (< (abs (- (cadr v) y2)) eps)
+                      (< (abs (- (nth 2 v) y1)) eps))))
+      (setq found T)))
+  found)
+
+;;; 主函数：检测LINE组成的矩形
+(defun ap:detect-line-rectangles (/ ss h-lines v-lines i ent
+                                    p1 p2 dx dy eps
+                                    xvals yvals found
+                                    xi xj yi yj area min-area
+                                    bounds rec result)
+  (setq eps 1.0)
+  (setq min-area (ap:get-config-default "rect-min-area" 50000))
+  (setq ss (ssget "_X" (list (cons 0 "LINE"))))
+  (setq h-lines nil v-lines nil result nil)
+    (if (null ss) nil
+    (progn
+      (setq i 0)
+      (repeat (sslength ss)
+        (setq ent (ssname ss i))
+        (setq p1 (cdr (assoc 10 (entget ent))))
+        (setq p2 (cdr (assoc 11 (entget ent))))
+        (setq dx (abs (- (car p1) (car p2))))
+        (setq dy (abs (- (cadr p1) (cadr p2))))
+        (cond
+          ((and (> dx 50000.0) (< dy eps))
+           (setq h-lines (cons (list (car p1) (cadr p1) (car p2)) h-lines)))
+          ((and (< dx eps) (> dy 50000.0))
+           (setq v-lines (cons (list (car p1) (cadr p1) (cadr p2)) v-lines))))
+        (setq i (1+ i)))
+      (setq xvals nil yvals nil)
+      (foreach v v-lines
+        (setq found nil)
+        (foreach x xvals (if (< (abs (- (car v) x)) eps) (setq found T)))
+        (if (null found) (setq xvals (cons (car v) xvals))))
+      (foreach h h-lines
+        (setq found nil)
+        (foreach y yvals (if (< (abs (- (cadr h) y)) eps) (setq found T)))
+        (if (null found) (setq yvals (cons (cadr h) yvals))))
+      (foreach xi xvals
+        (foreach xj xvals
+          (if (< xi xj)
+            (foreach yi yvals
+              (foreach yj yvals
+                (if (< yi yj)
+                  (progn
+                    (setq area (* (- xj xi) (- yj yi)))
+                    (if (and (>= area min-area)
+                             (ap:has-hline h-lines yi xi xj eps)
+                             (ap:has-hline h-lines yj xi xj eps)
+                             (ap:has-vline v-lines xi yi yj eps)
+                             (ap:has-vline v-lines xj yi yj eps))
+                      (progn
+                        (setq bounds (list (list xi yi) (list xj yj)))
+                        (setq rec (list
+                          (cons "entity" (ssname ss 0))
+                          (cons "type" "RECTANGLE")
+                          (cons "block-name" nil)
+                          (cons "layout" "Model")
+                          (cons "bounds" bounds)
+                          (cons "paper-match" nil)
+                          (cons "orientation" nil)))
+                        (setq result (cons rec result)))))))))
+      result)))))
 
 ;;; ------------------------------------------------------------
 ;;; 去重与有效性验证
@@ -269,7 +420,9 @@
 ;;; 主入口：图框识别
 ;;; ------------------------------------------------------------
 (defun ap:detect-all-frames (/ block-names frames block-result
-                               paper-result rect-result enhanced)
+                               paper-result rect-result enhanced
+                               line-result line-filtered
+                               lr-b br-b keep)
   (setq block-names (ap:get-config-default "block-names"
                       '("TK" "TUKUANG" "BORDER")))
   (setq frames nil)
@@ -290,16 +443,29 @@
   ;; 4. 合并块搜索结果
   (setq frames block-result)
 
-  ;; 5. 若块名策略零结果，尝试矩形检测
-  (if (and (null frames)
-           (ap:get-config-default "detect-rectangles" T))
+  ;; 5. LINE矩形补充检测
+  (setq line-result (vl-catch-all-apply 'ap:detect-line-rectangles (list)))
+  (if (vl-catch-all-error-p line-result)
+    (princ (strcat "\n  [DEBUG] LINE检测错误: " (vl-catch-all-error-message line-result)))
     (progn
-      (princ "\n[AutoPlot] 块名未匹配，启用矩形备选检测...")
-      (setq rect-result (ap:detect-rectangles))
-      (if rect-result
+      (princ (strcat "\n  [DEBUG] LINE检测结果: " (itoa (length line-result)) " 个"))
+      ;; 过滤：排除与块检测区域重叠的矩形
+      (setq line-filtered nil)
+      (foreach lr line-result
+        (setq keep T)
+        (setq lr-b (vl-catch-all-apply 'ap:frame-get (list lr "bounds")))
+        (if (and block-result lr-b (not (vl-catch-all-error-p lr-b)))
+          (foreach br block-result
+            (setq br-b (vl-catch-all-apply 'ap:frame-get (list br "bounds")))
+            (if (and br-b (not (vl-catch-all-error-p br-b)))
+              (if (>= (ap:overlap-ratio lr-b br-b) 0.5)
+                (setq keep nil)))))
+        (if keep
+          (setq line-filtered (cons lr line-filtered))))
+      (if line-filtered
         (progn
-          (setq frames rect-result)
-          (princ (strcat "\n  矩形检测找到 " (itoa (length frames)) " 个候选"))))))
+          (princ (strcat "\n  LINE矩形: " (itoa (length line-filtered)) " 个"))
+          (setq frames (append frames (reverse line-filtered)))))))
 
   ;; 6. 去重、排序
   (if frames

@@ -80,6 +80,8 @@ runtime_config = {
     "split_borders": True,
     "max_workers": MAX_WORKERS,
     "t3_mode": True,
+    "drawing_scale": 1.0,
+    "drawing_scales": [1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 500, 1000],
 }
 
 # --- Task store: task_id -> {status, files, results, zip_path, ...} ---
@@ -248,17 +250,16 @@ def convert():
     # 这样 accoreconsole 才能访问
     project_dir = os.path.dirname(os.path.dirname(__file__))
     if WORK_DIR:
-        upload_dir = os.path.join(WORK_DIR, task_id)
+        task_dir = os.path.join(WORK_DIR, task_id)
     else:
-        upload_dir = os.path.join(project_dir, "output", task_id)
-    output_dir = os.path.join(upload_dir, "output")
-    os.makedirs(output_dir, exist_ok=True)
+        task_dir = os.path.join(project_dir, "output", task_id)
+    os.makedirs(task_dir, exist_ok=True)
 
     # Save uploaded files (sanitize filenames)
     saved = []
     for f in dwg_files:
         safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.dwg"
-        p = os.path.join(upload_dir, safe_name)
+        p = os.path.join(task_dir, safe_name)
         f.save(p)
         saved.append((f.filename, p))
 
@@ -282,12 +283,13 @@ def convert():
     # Submit to thread pool
     def _do_convert(filename, dwg_path):
         t0 = time.time()
-        # 每个 DWG 单独的输出子目录
-        stem = Path(dwg_path).stem
-        per_output_dir = os.path.join(output_dir, stem)
+        # 用原始文件名建输出子目录
+        orig_stem = Path(filename).stem
+        safe_stem = Path(dwg_path).stem
+        per_output_dir = os.path.join(task_dir, orig_stem)
         os.makedirs(per_output_dir, exist_ok=True)
-        # 复制原始 DWG 到输出子目录
-        shutil.copy2(dwg_path, os.path.join(per_output_dir, os.path.basename(dwg_path)))
+        # 复制原始 DWG 到输出子目录（用原始文件名）
+        shutil.copy2(dwg_path, os.path.join(per_output_dir, filename))
         cb = _progress_cb(task_id, filename)
         _sse_broadcast("file_start", {"task_id": task_id, "file": filename})
         try:
@@ -297,12 +299,22 @@ def convert():
                 plot_style=plot_style,
                 border_keywords=border_kw,
                 plot_scale="Fit",
+                drawing_scale=runtime_config.get("drawing_scale", 1.0),
                 timeout=runtime_config["timeout"],
                 progress_callback=cb,
             )
         except Exception as ex:
             r = ConversionResult(dwg_path=dwg_path, error=str(ex), elapsed=time.time() - t0)
             log.error("Task %s: convert exception for %s: %s", task_id[:6], filename, ex)
+
+        # LSP 用安全文件名生成 PDF/DXF，重命名为原始文件名
+        if r.success and safe_stem != orig_stem:
+            for f in os.listdir(per_output_dir):
+                if f.startswith(safe_stem):
+                    new_name = f.replace(safe_stem, orig_stem, 1)
+                    os.rename(
+                        os.path.join(per_output_dir, f),
+                        os.path.join(per_output_dir, new_name))
 
         elapsed = time.time() - t0
         pdf_count = len(r.borders) if r.borders else (1 if r.success else 0)
@@ -336,27 +348,19 @@ def convert():
                                 "pdf_count": 0, "elapsed": 0, "borders": [], "dwg_path": ""})
 
         # Build per-DWG ZIPs, then a master ZIP
-        master_zip_path = os.path.join(upload_dir, "result.zip")
+        master_zip_path = os.path.join(task_dir, "result.zip")
         with zipfile.ZipFile(master_zip_path, "w", zipfile.ZIP_DEFLATED) as master_zf:
             for r in results:
                 if not r["success"]:
                     continue
-                dwg_path = r.get("dwg_path", "")
-                if not dwg_path or not os.path.exists(dwg_path):
+                orig_stem = Path(r["file"]).stem
+                per_output_dir = os.path.join(task_dir, orig_stem)
+                if not os.path.isdir(per_output_dir):
                     continue
-                stem = Path(dwg_path).stem
-                per_output_dir = os.path.join(output_dir, stem)
-                # 所有文件放入 <stem>/ 子目录
-                files = []
-                # 1. DWG
-                files.append((dwg_path, f"{stem}/{os.path.basename(dwg_path)}"))
-                # 2. DXF + PDFs
-                if os.path.isdir(per_output_dir):
-                    for name in sorted(os.listdir(per_output_dir)):
-                        if name.lower().endswith((".pdf", ".dxf")):
-                            files.append((os.path.join(per_output_dir, name), f"{stem}/{name}"))
-                for fpath, arcname in files:
-                    master_zf.write(fpath, arcname)
+                # 所有文件放入 <orig_stem>/ 子目录
+                for name in sorted(os.listdir(per_output_dir)):
+                    if name.lower().endswith((".pdf", ".dxf", ".dwg")):
+                        master_zf.write(os.path.join(per_output_dir, name), f"{orig_stem}/{name}")
 
         total_time = time.time() - task["start_time"]
         ok_count = sum(1 for r in results if r["success"])
@@ -617,6 +621,22 @@ def admin_set_config():
         log.info("Print config updated: %s", print_updated)
 
     return jsonify({"status": "ok", "updated": {**updated, **print_updated}})
+
+
+@app.route("/admin/clean", methods=["POST"])
+def admin_clean():
+    user = session.get("user")
+    if not user or user.get("is_admin") != 1:
+        return jsonify({"error": "需要管理员权限"}), 403
+    project_dir = Path(__file__).parent.parent
+    cleaned = []
+    for dirname in ("_work", "output"):
+        d = project_dir / dirname
+        if d.is_dir():
+            count = sum(1 for _ in d.rglob("*") if _.is_file())
+            shutil.rmtree(d, ignore_errors=True)
+            cleaned.append(f"{dirname}/ ({count} 文件)")
+    return jsonify({"status": "ok", "detail": ", ".join(cleaned) or "目录为空，无需清理"})
 
 
 @app.route("/logs", methods=["GET"])
