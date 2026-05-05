@@ -415,13 +415,14 @@ header{
           <div id="mCtbList" style="max-height:200px;overflow-y:auto;margin-bottom:8px"></div>
           <button class="btn bs" style="font-size:12px;padding:4px 12px" onclick="$('fAdmCtb').click()">上传 CTB</button>
           <input type="file" id="fAdmCtb" accept=".ctb" style="display:none">
-          <label style="display:block;margin:16px 0 8px;font-size:12px;color:var(--text2)">临时文件清理</label>
-          <button class="btn" style="font-size:12px;padding:4px 12px;background:var(--danger);color:#fff;border:none" onclick="cleanWork()">清空 _work + output</button>
+          <label style="display:block;margin:16px 0 8px;font-size:12px;color:var(--text2)">Worker 节点状态</label>
+          <div id="mWorkerStatus" style="max-height:200px;overflow-y:auto"></div>
         </div>
       </div>
     </div>
     <div class="brow">
       <button class="btn" style="background:transparent;border:1px solid var(--border);color:var(--text2)" onclick="closeAdmin()">取消</button>
+      <button class="btn" style="font-size:12px;padding:4px 12px;background:transparent;color:var(--red);border:1px solid var(--red)" onclick="cleanWork()">清空 _work + output</button>
       <button class="btn bs" onclick="saveAdmin()">保存</button>
     </div>
   </div>
@@ -520,8 +521,22 @@ window.openAdmin=function(){
     renderWorkers();
     admTab('sys');
     $('adminModal').classList.add('show');
+    loadWorkerStatus();
   });
 };
+function loadWorkerStatus(){
+  fetch(API+'/admin/workers',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){
+    var el=$('mWorkerStatus');el.innerHTML='';
+    if(!d.workers||!d.workers.length){el.innerHTML='<div style="color:var(--text3);font-size:11px;font-family:var(--mono)">无 Worker 节点</div>';return}
+    d.workers.forEach(function(w){
+      var row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px';
+      var dot=document.createElement('span');dot.style.cssText='width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(w.status==='online'?'var(--green)':'var(--red)');
+      var nm=document.createElement('span');nm.style.cssText='color:var(--text);font-weight:600;width:80px';nm.textContent=w.worker_id;
+      var info=document.createElement('span');info.style.cssText='color:var(--text2);flex:1';info.textContent=w.active_slots+'/'+w.capacity+' 活跃 · 完成 '+w.done_count+' · 均耗时 '+(w.avg_time||0)+'s';
+      row.appendChild(dot);row.appendChild(nm);row.appendChild(info);el.appendChild(row);
+    });
+  });
+}
 function renderCtbList(files){
   var el=$('mCtbList');el.innerHTML='';
   if(!files.length){el.textContent='无CTB文件';return}

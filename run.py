@@ -17,19 +17,22 @@ app.register_blueprint(pdf2dwg_bp)
 app.register_blueprint(dispatch_bp)
 
 
-# 用 before_request 覆盖 / 路由，返回新版前端
+# 用 before_request 覆盖 / 路由，返回新版前端（保留 SSO 认证）
 @app.before_request
 def _override_index():
-    from flask import request
+    from flask import request, session
     if request.path == "/":
+        if not session.get("user"):
+            from acad2pdf.api import SSO_URL
+            return __import__("flask").redirect(f"{SSO_URL}/login?from={request.host_url}callback")
         static_dir = os.path.join(os.path.dirname(__file__), "acad2pdf", "static")
-        return send_from_directory(static_dir, "index2.html")
+        return send_from_directory(static_dir, "index.html")
 
 
 def start_local_worker():
     """启动本地 Worker（后台线程）。直接用 store 注册，不走 HTTP。"""
     import time
-    from acad2pdf.api import runtime_config
+    from acad2pdf.api import API_KEY, runtime_config
     from acad2pdf.task_store import store
 
     capacity = runtime_config.get("max_workers", MAX_WORKERS)
@@ -39,7 +42,7 @@ def start_local_worker():
         worker_id="local",
         capacity=capacity,
         master_url=f"http://127.0.0.1:{API_PORT}",
-        api_key="",
+        api_key=API_KEY,
         acad_exe=os.environ.get("ACAD_EXE", r"C:\opt\AutoCAD 2026\acad.exe"),
         timeout=runtime_config.get("timeout", 300),
     )

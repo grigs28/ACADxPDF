@@ -260,3 +260,71 @@ def start_worker_threads(worker: Worker, num_threads: int):
         t.start()
         threads.append(t)
     return threads
+
+
+if __name__ == "__main__":
+    """远程 Worker 独立启动入口。
+
+    用法: python -m acad2pdf.worker
+    配置: worker.json（同目录下）
+    """
+    import signal
+    import sys
+
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "worker.json")
+    if not os.path.exists(config_path):
+        print("错误: worker.json 不存在")
+        print(f"请创建 {config_path}，格式:")
+        print(json.dumps({
+            "master_url": "http://192.168.0.5:5557",
+            "worker_id": "node-A",
+            "capacity": 4,
+            "api_key": "axp-xxx",
+            "acad_exe": r"C:\\opt\\AutoCAD 2026\\acad.exe",
+            "timeout": 300,
+        }, indent=2, ensure_ascii=False))
+        sys.exit(1)
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+    worker = Worker(
+        worker_id=cfg.get("worker_id", f"worker-{uuid.uuid4().hex[:4]}"),
+        capacity=cfg.get("capacity", 4),
+        master_url=cfg["master_url"],
+        api_key=cfg.get("api_key", ""),
+        acad_exe=cfg.get("acad_exe", ""),
+        timeout=cfg.get("timeout", 300),
+    )
+
+    worker.register()
+    threads = start_worker_threads(worker, worker.capacity)
+
+    # 心跳线程
+    def heartbeat_loop():
+        while worker._running:
+            time.sleep(30)
+            worker.heartbeat()
+
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+
+    log.info("Remote worker %s started (capacity=%d, master=%s)",
+             worker.worker_id, worker.capacity, worker.master_url)
+
+    def _shutdown(signum, frame):
+        log.info("Shutting down worker %s...", worker.worker_id)
+        worker.stop()
+        worker.unregister()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    # 主线程等待
+    for t in threads:
+        t.join()

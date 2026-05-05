@@ -172,11 +172,6 @@ def _check_api_key():
 
 @app.route("/")
 def index():
-    if not session.get("user"):
-        return redirect(f"{SSO_URL}/login?from={request.host_url}callback")
-    static_dir = Path(__file__).parent / "static"
-    if (static_dir / "index.html").exists():
-        return send_from_directory(str(static_dir), "index.html")
     return jsonify({"status": "ok", "message": "ACADxPDF API"})
 
 
