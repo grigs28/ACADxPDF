@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import re
 import zipfile
 
 from flask import Blueprint, request, jsonify, send_file, session
@@ -12,6 +13,14 @@ from werkzeug.utils import secure_filename
 from .task_store import store
 
 log = logging.getLogger("acad2pdf")
+
+
+def _safe_filename(name: str) -> str:
+    """保留中文的文件名清理：移除 Windows 不允许的字符，保留 Unicode。"""
+    name = os.path.basename(name).strip()
+    name = re.sub(r'[\\/*?:"<>|]', '_', name)
+    name = name.strip('. ')
+    return name or "output"
 
 dispatch_bp = Blueprint("dispatch", __name__)
 
@@ -105,13 +114,13 @@ def report_result():
     task, f = found
 
     output_files = []
-    output_dir = os.path.join(task.results_dir, f.id)
+    stem = os.path.splitext(f.name)[0]
+    output_dir = os.path.join(task.results_dir, stem)
     os.makedirs(output_dir, exist_ok=True)
 
-    for key in request.files:
-        uploaded = request.files[key]
+    for uploaded in request.files.getlist("files"):
         if uploaded.filename:
-            safe = secure_filename(uploaded.filename) or f"{key}_{file_id}"
+            safe = _safe_filename(uploaded.filename)
             dest = os.path.join(output_dir, safe)
             uploaded.save(dest)
             output_files.append(dest)
@@ -120,6 +129,19 @@ def report_result():
 
     log.info("Result reported: %s success=%s elapsed=%.1f outputs=%d",
              file_id, success, elapsed, len(output_files))
+
+    # 广播 file_done 事件，UI 可显示实时进度
+    from .api import _sse_broadcast
+    _sse_broadcast("file_done", {
+        "task_id": task.id,
+        "file_id": file_id,
+        "file": f.name,
+        "success": success,
+        "elapsed": elapsed,
+        "done_count": task.done_count,
+        "total": task.total,
+        "metadata": metadata,
+    })
 
     if task.all_done():
         _finalize_task(task)
@@ -149,10 +171,10 @@ def _finalize_task(task):
     zip_path = os.path.join(task.results_dir, "result.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in task.files:
-            fdir = os.path.join(task.results_dir, f.id)
+            stem = os.path.splitext(f.name)[0]
+            fdir = os.path.join(task.results_dir, stem)
             if not os.path.isdir(fdir):
                 continue
-            stem = os.path.splitext(f.name)[0]
             for name in sorted(os.listdir(fdir)):
                 if name.lower().endswith((".pdf", ".dwg", ".dxf")):
                     zf.write(os.path.join(fdir, name), f"{stem}/{name}")
@@ -164,7 +186,8 @@ def _finalize_task(task):
     total_pdfs = 0
     if task.type == "dwg2pdf":
         for f in task.files:
-            fdir = os.path.join(task.results_dir, f.id)
+            stem = os.path.splitext(f.name)[0]
+            fdir = os.path.join(task.results_dir, stem)
             if f.status == "done" and os.path.isdir(fdir):
                 total_pdfs += len([n for n in os.listdir(fdir) if n.lower().endswith(".pdf")])
 

@@ -173,6 +173,10 @@ class Worker:
                     border_keywords=params.get("border_keywords"),
                     timeout=self.timeout,
                 )
+                # 转换后将源 DWG 复制到输出目录，打包时一并包含
+                if result.success and os.path.isfile(local_path):
+                    dwg_name = file_info.get("file_name", os.path.basename(local_path))
+                    shutil.copy2(local_path, os.path.join(output_dir, dwg_name))
                 elapsed = round(time.time() - t0, 1)
                 return {
                     "success": result.success,
@@ -192,6 +196,12 @@ class Worker:
                     self.acad_exe or params.get("acad_exe", ""),
                     self.timeout,
                 )
+                # 转换后将源 PDF 复制到输出目录
+                if result["ok"] and os.path.isfile(local_path):
+                    pdf_name = file_info.get("file_name", os.path.basename(local_path))
+                    shutil.copy2(local_path, os.path.join(output_dir, pdf_name))
+                # 清理临时工作目录
+                shutil.rmtree(work_dir, ignore_errors=True)
                 elapsed = round(time.time() - t0, 1)
                 return {
                     "success": result["ok"],

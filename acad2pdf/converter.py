@@ -1250,9 +1250,8 @@ def convert_dwg_lsp(
         _emit(progress_callback, "error", {"file": os.path.basename(dwg_path), "error": str(ex)})
     finally:
         result.elapsed = time.time() - start
-        # 暂不清理工作目录，便于调试
-        # if os.path.isdir(work_dir):
-        #     shutil.rmtree(work_dir, ignore_errors=True)
+        if os.path.isdir(work_dir):
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     return result
 
