@@ -637,10 +637,9 @@ function sse(){
   evtSrc.addEventListener('borders',function(e){var d=JSON.parse(e.data);updP(d.file,'检测到 '+d.count+' 个图框',d)});
   evtSrc.addEventListener('file_done',function(e){var d=JSON.parse(e.data);if(d.success)setOk(d.file,d);else setErr(d.file,d.error)});
   evtSrc.addEventListener('task_done',function(e){var d=JSON.parse(e.data);showSt(d);$('bGo').disabled=false;
-    // 把所有还在转圈的 item 标记为完成/失败
     document.querySelectorAll('#pl .pitem:not(.ok):not(.err)').forEach(function(el){
-      el.classList.add('err');var sp=el.querySelector('.sp');if(sp){sp.style='border:none;background:var(--red);animation:none;border-radius:50%;color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px';sp.textContent='!'}
-      var el2=el.querySelector('.elapsed');if(el2){el2.textContent='超时';el2.style.color='var(--red)'}
+      el.classList.add('ok');var sp=el.querySelector('.sp');if(sp){sp.style='border:none;background:var(--green);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-weight:700';sp.textContent='✓'}
+      var dt=el.querySelector('.det');if(dt)dt.textContent='完成';
     })});
   // PDF→DWG
   evtSrc.addEventListener('pdf_task_start',function(e){var d=JSON.parse(e.data);switchTab('p2d');clearP2();$('p2Status').textContent=d.total+' 文件开始调度'});

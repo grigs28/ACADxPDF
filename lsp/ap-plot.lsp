@@ -99,6 +99,13 @@
          (setvar "FILEDIA" 0)
          (setvar "CMDDIA" 0)
          (setvar "EXPERT" 5)
+         (setvar "PROXYNOTICE" 0)
+         (setvar "DWGCHECK" 0)
+         (setvar "RECOVERYMODE" 0)
+         (setvar "FONTALT" "hztxt.shx")
+         (setvar "ATTDIA" 0)
+         (setvar "SIGWARN" 0)
+         (setvar "NOMUTT" 1)
          (command "_.-PLOT" "Y" ""
            printer
            paper-name
