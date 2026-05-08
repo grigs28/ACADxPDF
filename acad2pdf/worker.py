@@ -82,7 +82,8 @@ class Worker:
         except Exception:
             pass
 
-    def pull(self) -> list[dict]:
+    def pull(self) -> tuple[list[dict], dict]:
+        """拉取任务，返回 (文件列表, 服务器配置如 timeout)。"""
         import requests as http_req
         try:
             resp = http_req.post(
@@ -91,10 +92,11 @@ class Worker:
                 headers=self._headers(), timeout=10,
             )
             if resp.status_code == 200:
-                return resp.json().get("files", [])
+                data = resp.json()
+                return data.get("files", []), data.get("config", {})
         except Exception as ex:
             log.error("Worker %s pull error: %s", self.worker_id, ex)
-        return []
+        return [], {}
 
     def download_file(self, file_id: str, dest_dir: str) -> str | None:
         import requests as http_req
@@ -155,13 +157,14 @@ class Worker:
         except Exception as ex:
             log.error("Worker %s report error: %s", self.worker_id, ex)
 
-    def _convert_one(self, file_info: dict, local_path: str) -> dict:
+    def _convert_one(self, file_info: dict, local_path: str, timeout: int = 0) -> dict:
         """根据 task_type 调用对应转换函数。"""
         task_type = file_info.get("task_type", "dwg2pdf")
         params = file_info.get("params", {})
         output_dir = os.path.dirname(local_path) + f"_out_{uuid.uuid4().hex[:4]}"
         os.makedirs(output_dir, exist_ok=True)
         t0 = time.time()
+        effective_timeout = timeout or self.timeout
 
         try:
             if task_type == "dwg2pdf":
@@ -171,7 +174,7 @@ class Worker:
                     printer=params.get("printer"),
                     plot_style=params.get("plot_style"),
                     border_keywords=params.get("border_keywords"),
-                    timeout=self.timeout,
+                    timeout=effective_timeout,
                 )
                 # 转换后将源 DWG 复制到输出目录，打包时一并包含
                 if result.success and os.path.isfile(local_path):
@@ -194,7 +197,7 @@ class Worker:
                 result = convert_one_pdf(
                     local_path, output_dir, work_dir,
                     self.acad_exe or params.get("acad_exe", ""),
-                    self.timeout,
+                    effective_timeout,
                 )
                 # 转换后将源 PDF 复制到输出目录
                 if result["ok"] and os.path.isfile(local_path):
@@ -217,7 +220,7 @@ class Worker:
             return {"success": False, "elapsed": elapsed, "output_dir": "",
                     "error": str(ex), "metadata": {}}
 
-    def run_one(self, file_info: dict):
+    def run_one(self, file_info: dict, timeout: int = 0):
         """处理单个文件：download → convert → report。"""
         with self._lock:
             self._active += 1
@@ -229,7 +232,7 @@ class Worker:
                 self.report_result(file_info["file_id"], False, error="download failed")
                 return
 
-            r = self._convert_one(file_info, local_path)
+            r = self._convert_one(file_info, local_path, timeout or self.timeout)
             self.report_result(
                 file_info["file_id"], r["success"],
                 r.get("output_dir", ""), r.get("error", ""),
@@ -242,19 +245,26 @@ class Worker:
             with self._lock:
                 self._active = max(0, self._active - 1)
 
+    def _get_timeout(self, server_config: dict) -> int:
+        """获取当前超时：远程 Worker 用服务器下发的值，本地 Worker 用 runtime_config。"""
+        if server_config.get("timeout"):
+            return int(server_config["timeout"])
+        return self.timeout
+
     def run_loop(self):
         """Worker 主循环（单线程拉取模式）。"""
         self._running = True
         log.info("Worker %s loop started (capacity=%d)", self.worker_id, self.capacity)
         while self._running:
-            files = self.pull()
+            files, srv_config = self.pull()
             if not files:
                 time.sleep(2)
                 continue
+            timeout = self._get_timeout(srv_config)
             for f in files:
                 if not self._running:
                     break
-                self.run_one(f)
+                self.run_one(f, timeout)
         log.info("Worker %s loop stopped", self.worker_id)
 
     def stop(self):

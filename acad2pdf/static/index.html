@@ -398,6 +398,11 @@ header{
           <label>Worker 节点</label>
           <div id="mWorkers" style="flex:1;margin-bottom:8px;overflow-y:auto"></div>
           <button class="btn bs" style="font-size:12px;padding:4px 12px;width:100%" onclick="addWorker()">+ 添加节点</button>
+          <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+            <label style="font-size:12px;color:var(--text2)">远程 Worker 配置</label>
+            <div style="margin-top:6px;font-family:var(--mono);font-size:11px;background:var(--surface2);padding:8px;border-radius:4px;color:var(--text);white-space:pre;overflow-x:auto" id="mWorkerCfg"></div>
+            <button class="btn bs" style="font-size:11px;padding:3px 10px;margin-top:6px;width:100%" onclick="copyWorkerCfg()">复制 worker.json</button>
+          </div>
         </div>
       </div>
     </div>
@@ -519,9 +524,19 @@ window.openAdmin=function(){
     $('mMaxWorkers').value=d.max_workers||'';
     _workers=(d.workers||[]).map(function(w){return {name:w.name||'',url:w.url||'',max_slots:w.max_slots||4}});
     renderWorkers();
+    // 生成远程 Worker 配置模板
+    var masterUrl=location.protocol+'//'+location.host;
+    var wCfg={master_url:masterUrl,worker_id:'node-A',capacity:4,api_key:d.api_key||'',acad_exe:d.acad_exe||'',timeout:d.pdf_timeout||300};
+    $('mWorkerCfg').textContent=JSON.stringify(wCfg,null,2);
     admTab('sys');
     $('adminModal').classList.add('show');
     loadWorkerStatus();
+  });
+};
+window.copyWorkerCfg=function(){
+  var t=$('mWorkerCfg').textContent;
+  navigator.clipboard.writeText(t).then(function(){alert('已复制 worker.json 配置')}).catch(function(){
+    var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);alert('已复制');
   });
 };
 function loadWorkerStatus(){
@@ -742,7 +757,7 @@ function updP(f,step,data){
   var dt=e.querySelector('.det');if(dt)dt.innerHTML='<span class="sbadge">'+(step||'...')+'</span>'+(data&&data.size_label?' '+data.size_label:'');
   if(data&&data.batch_index){var el=e.querySelector('.elapsed');if(el)el.textContent='['+data.batch_index+'/'+data.batch_total+']'}
 }
-function setOk(f,data){var e=$('p-'+sid(f));if(!e)return;e.classList.add('ok');var dt=e.querySelector('.det');if(dt)dt.textContent=data.pdf_count+' PDF';var el=e.querySelector('.elapsed');if(el)el.textContent=data.elapsed+'s'}
+function setOk(f,data){var e=$('p-'+sid(f));if(!e){addP(f,'转换中...');e=$('p-'+sid(f));if(!e)return;}e.classList.add('ok');var dt=e.querySelector('.det');if(dt)dt.textContent=(data.metadata&&data.metadata.pdf_count?data.metadata.pdf_count:'?')+' PDF';var el=e.querySelector('.elapsed');if(el)el.textContent=data.elapsed+'s'}
 function setErr(f,err){
   var e=$('p-'+sid(f));
   if(!e){e=document.createElement('div');e.className='pitem err';e.id='p-'+sid(f);e.innerHTML='<div class="sp" style="border:none;background:var(--red);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-weight:700">!</div><div style="flex:1"><div class="pname">'+f+'</div><div class="det">'+(err||'未知错误')+'</div></div><div class="elapsed" style="color:var(--red)">失败</div>';$('pl').appendChild(e)}

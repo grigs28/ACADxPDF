@@ -1152,6 +1152,8 @@ def convert_dwg_lsp(
             '(setvar "SECURELOAD" 0)\n'
             '(setvar "BACKGROUNDPLOT" 0)\n'
             '(setvar "PUBLISHCOLLATE" 0)\n'
+            '(setvar "LOGFILEMODE" 0)\n'
+            '(setvar "FONTALT" "hztxt.shx")\n'
             '(setenv "AutoViewPDFInPDFViewer" "0")\n'
             f'(setq _lf (open "{log_fwd}" "w"))\n'
             '(defun _log (s) (write-line s _lf) (close _lf) (setq _lf (open "'
@@ -1164,20 +1166,31 @@ def convert_dwg_lsp(
             '(_log "config_loaded")\n'
             '(setq _doc (vla-get-ActiveDocument (vlax-get-acad-object)))\n'
             '(_log (strcat "doc=" (vla-get-Name _doc)))\n'
-            '(ap:export-dxf)\n'
-            '(_log "dxf_exported")\n'
-            '(setq _detect-err nil)\n'
-            '(setq _frames (vl-catch-all-apply \'ap:detect-all-frames (list)))\n'
-            '(if (vl-catch-all-error-p _frames)\n'
-            '  (progn (_log (strcat "detect_error: " (vl-catch-all-error-message _frames))) (setq _frames nil))\n'
-            '  (_log (strcat "frames=" (itoa (length (if _frames _frames (list nil)))))))\n'
-            '(if _frames\n'
+            '(setq _ms (vla-get-ModelSpace _doc))\n'
+            '(setq _wait 0)\n'
+            '(while (and (= (vla-get-Count _ms) 0) (< _wait 300))\n'
+            '  (vlax-invoke-method (vla-get-Utility _doc) \'Prompt "\\nWaiting for DWG to load...")\n'
+            '  (command "_.DELAY" 5000)\n'
+            '  (setq _wait (+ _wait 5)))\n'
+            '(setq _ent-count (vla-get-Count _ms))\n'
+            '(_log (strcat "entities=" (itoa _ent-count) " wait=" (itoa _wait) "s"))\n'
+            '(if (> _ent-count 0)\n'
             '  (progn\n'
-            '    (setq _output-dir (ap:get-config-default "output-directory" "./PDF_Output"))\n'
-            '    (vl-mkdir _output-dir)\n'
-            '    (setq _pf-result (ap:process-frames _doc _frames _output-dir))\n'
-            '    (_log (strcat "pdfs=" (itoa (length (if _pf-result _pf-result (list nil)))))))\n'
-            '  (_log "NO_FRAMES"))\n'
+            '    (ap:export-dxf)\n'
+            '    (_log "dxf_exported")\n'
+            '    (setq _detect-err nil)\n'
+            '    (setq _frames (vl-catch-all-apply \'ap:detect-all-frames (list)))\n'
+            '    (if (vl-catch-all-error-p _frames)\n'
+            '      (progn (_log (strcat "detect_error: " (vl-catch-all-error-message _frames))) (setq _frames nil))\n'
+            '      (_log (strcat "frames=" (itoa (length (if _frames _frames (list nil)))))))\n'
+            '    (if _frames\n'
+            '      (progn\n'
+            '        (setq _output-dir (ap:get-config-default "output-directory" "./PDF_Output"))\n'
+            '        (vl-mkdir _output-dir)\n'
+            '        (setq _pf-result (ap:process-frames _doc _frames _output-dir))\n'
+            '        (_log (strcat "pdfs=" (itoa (length (if _pf-result _pf-result (list nil)))))))\n'
+            '      (_log "NO_FRAMES")))\n'
+            '  (_log "EMPTY_DOC"))\n'
             '(_log "done")\n'
             '(close _lf)\n'
             '(command "_.QUIT" "Y")\n'
@@ -1205,6 +1218,27 @@ def convert_dwg_lsp(
             proc.kill()
             proc.wait()
             result.error = f"acad.exe timeout ({timeout}s)"
+            # 超时也尝试收集已生成的 PDF
+            pdf_files = sorted(
+                [os.path.join(output_dir, f) for f in os.listdir(output_dir)
+                 if f.lower().endswith(".pdf")],
+                key=lambda p: os.path.basename(p)
+            )
+            if pdf_files:
+                result.success = True
+                result.pdf_path = pdf_files[0] if len(pdf_files) == 1 else json.dumps(pdf_files)
+                stem = Path(dwg_path).stem
+                borders = []
+                for pf in pdf_files:
+                    bn = os.path.splitext(os.path.basename(pf))[0]
+                    parts = bn.rsplit("_", 2)
+                    borders.append(Border(
+                        world_bbox=((0, 0), (0, 0)),
+                        local_bbox=((0, 0), (0, 0)),
+                        scale=1.0,
+                        label=parts[-1] if len(parts) >= 2 else "",
+                    ))
+                result.borders = borders
             return result
         print(f"[LSP] acad.exe exit_code={proc.returncode} for {os.path.basename(dwg_path)}", file=sys.stderr)
 

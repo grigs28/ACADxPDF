@@ -96,9 +96,9 @@
       '(lambda ()
          (setvar "BACKGROUNDPLOT" 0)
          (setvar "PUBLISHCOLLATE" 0)
-         (command "_.FILEDIA" "0")
-         (command "_.CMDDIA" "0")
-         (command "_.EXPERT" "1")
+         (setvar "FILEDIA" 0)
+         (setvar "CMDDIA" 0)
+         (setvar "EXPERT" 5)
          (command "_.-PLOT" "Y" ""
            printer
            paper-name

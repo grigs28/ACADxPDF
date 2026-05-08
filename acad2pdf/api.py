@@ -167,7 +167,6 @@ def _check_api_key():
     if API_KEY and key == API_KEY:
         return None
     return jsonify({"error": "unauthorized"}), 401
-    return None
 
 
 @app.route("/")
@@ -250,6 +249,9 @@ def convert():
 
 @app.route("/task/<task_id>")
 def get_task(task_id):
+    err = _check_api_key()
+    if err:
+        return err
     task = store.get_task(task_id)
     if not task:
         return jsonify({"error": "task not found"}), 404
@@ -258,10 +260,21 @@ def get_task(task_id):
 
 @app.route("/download/<task_id>")
 def download(task_id):
+    err = _check_api_key()
+    if err:
+        return err
     task = store.get_task(task_id)
     if not task or not task.zip_path or not os.path.exists(task.zip_path):
         return jsonify({"error": "no result"}), 404
-    return send_file(task.zip_path, as_attachment=True, download_name=f"{task_id}.zip")
+    resp = send_file(task.zip_path, as_attachment=True, download_name=f"{task_id}.zip")
+    # 下载完成后删除任务目录
+    @resp.call_on_close
+    def _cleanup():
+        if task.results_dir and os.path.isdir(task.results_dir):
+            shutil.rmtree(task.results_dir, ignore_errors=True)
+            log.info("Task %s results cleaned after download", task_id)
+        store._tasks.pop(task_id, None)
+    return resp
 
 
 @app.route("/tasks")

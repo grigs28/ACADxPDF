@@ -19,14 +19,14 @@ python run.py
 
 ## 认证
 
-系统支持两种认证方式，二选一即可：
+系统支持两种认证方式，**二选一**即可：
 
 | 方式 | 适用场景 | 说明 |
 |------|----------|------|
-| SSO 登录 | Web 浏览器使用 | 通过统一登录平台登录，浏览器自动跳转 |
-| API Key | 程序调用 / 脚本 | 请求头 `X-API-Key` 或参数 `?apikey=xxx` |
+| SSO 登录 | 本机浏览器使用 Web UI | 通过统一登录平台登录，浏览器自动跳转 |
+| API Key | 其他电脑 / 脚本 / 程序调用 | 请求头 `X-API-Key` 或参数 `?apikey=xxx` |
 
-> Web UI（`/`）必须通过 SSO 登录访问；所有 API 端点使用 API Key 认证。
+> Web UI（`/`）必须通过 SSO 登录访问；所有 API 端点支持 SSO 或 API Key（任选一种）。
 
 ### API Key
 
@@ -35,10 +35,35 @@ python run.py
 ```bash
 # 查看当前 API Key
 cat .env | grep API_KEY
-
-# 使用 API Key 调用
-curl -H "X-API-Key: axp-xxxxxxxx" http://localhost:5557/convert -F "files=@test.dwg"
 ```
+
+### 其他电脑调用
+
+其他机器只需能网络访问主 API 即可，不需要 SSO，不需要浏览器。所有转换、查询、下载接口均通过 API Key 认证：
+
+```bash
+# 上传转换（DWG→PDF）
+curl -X POST http://192.168.0.5:5557/convert \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@图纸1.dwg" \
+  -F "files=@图纸2.dwg"
+
+# 查询任务状态
+curl -H "X-API-Key: axp-xxxxxxxx" http://192.168.0.5:5557/task/a1b2c3d4e5f6
+
+# 下载结果
+curl -H "X-API-Key: axp-xxxxxxxx" -o result.zip http://192.168.0.5:5557/download/a1b2c3d4e5f6
+
+# PDF→DWG 转换
+curl -X POST http://192.168.0.5:5557/convert-pdf \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@文件1.pdf"
+
+# 也可以用 URL 参数传 API Key
+curl http://192.168.0.5:5577/task/a1b2c3d4e5f6?apikey=axp-xxxxxxxx
+```
+
+> `192.168.0.5` 替换为主 API 机器的实际 IP。
 
 ---
 
@@ -147,7 +172,7 @@ result.zip
 ```
 POST /convert-pdf
 Content-Type: multipart/form-data
-认证：无（内部端点，通过 API Key 拉取）
+认证：API Key 或 SSO 登录
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -156,6 +181,7 @@ Content-Type: multipart/form-data
 
 ```bash
 curl -X POST http://localhost:5557/convert-pdf \
+  -H "X-API-Key: axp-xxxxxxxx" \
   -F "files=@test1.pdf" \
   -F "files=@test2.pdf"
 ```
@@ -167,24 +193,28 @@ curl -X POST http://localhost:5557/convert-pdf \
 ```
 POST /convert-pdf/add/<task_id>
 Content-Type: multipart/form-data
+认证：API Key 或 SSO 登录
 ```
 
 #### PDF 任务状态
 
 ```
 GET /pdf-task/<task_id>
+认证：API Key 或 SSO 登录
 ```
 
 #### 列出 PDF 任务
 
 ```
 GET /pdf-tasks
+认证：API Key 或 SSO 登录
 ```
 
 #### 下载 PDF→DWG 结果
 
 ```
 GET /download-pdf-zip/<task_id>
+认证：API Key 或 SSO 登录
 ```
 
 ---
@@ -492,10 +522,10 @@ python -m acad2pdf.worker
 
 | 角色 | 权限 |
 |------|------|
-| 未登录 | 仅可访问 `/health`、`/stream` |
-| SSO 登录用户 | 使用 Web UI、修改打印参数、查看配置 |
+| 未登录 | 仅可访问 `/health`、`/stream`、`/auth/check`、`/callback`、`/logout`、`/logs`、`/plot-styles` |
+| SSO 登录用户 | 使用 Web UI、调用所有转换接口、修改打印参数、查看配置和任务 |
 | 管理员 (`is_admin=1`) | 额外可修改系统配置（API Key、CAD 路径、Worker 列表等） |
-| API Key | 可调用所有转换和调度接口 |
+| API Key | 可调用所有转换、下载、任务查询和调度接口 |
 
 ---
 

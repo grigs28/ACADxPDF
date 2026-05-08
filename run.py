@@ -5,6 +5,7 @@ ACADxPDF 启动入口 — 统一调度架构（DWG→PDF + PDF→DWG）。
 """
 
 import os
+import shutil
 import threading
 from flask import send_from_directory
 from acad2pdf.api import app, API_HOST, API_PORT, MAX_WORKERS, log
@@ -15,6 +16,25 @@ from acad2pdf.worker import Worker, start_worker_threads
 # 注册 Blueprint
 app.register_blueprint(pdf2dwg_bp)
 app.register_blueprint(dispatch_bp)
+
+
+# 启动时清空临时文件
+def _cleanup_temp_dirs():
+    """清空 _work/ 和 output/ 目录中的残留文件。"""
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in ("_work", "output"):
+        d = os.path.join(project_dir, name)
+        if os.path.isdir(d):
+            try:
+                count = sum(1 for _ in os.scandir(d))
+                if count > 0:
+                    shutil.rmtree(d, ignore_errors=True)
+                    os.makedirs(d, exist_ok=True)
+                    log.info("Cleaned %s/ (%d items)", name, count)
+            except Exception as ex:
+                log.warning("Failed to clean %s/: %s", name, ex)
+
+_cleanup_temp_dirs()
 
 
 # 用 before_request 覆盖 / 路由，返回新版前端（保留 SSO 认证）

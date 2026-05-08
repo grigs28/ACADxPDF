@@ -87,10 +87,19 @@ def pull():
     files = store.pull(worker_id, capacity)
     if not files:
         return jsonify({"files": []})
+    from .api import _sse_broadcast
     for f in files:
         f["download_url"] = f"/dispatch/file/{f['file_id']}"
+        task = store.get_task(f.get("task_id"))
+        _sse_broadcast("file_start", {
+            "task_id": f.get("task_id"),
+            "file_id": f["file_id"],
+            "file": f.get("file_name", ""),
+            "worker": worker_id,
+        })
     log.info("Worker %s pulled %d files", worker_id, len(files))
-    return jsonify({"files": files})
+    from .api import runtime_config
+    return jsonify({"files": files, "config": {"timeout": runtime_config.get("timeout", 300)}})
 
 
 @dispatch_bp.route("/dispatch/result", methods=["POST"])

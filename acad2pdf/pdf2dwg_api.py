@@ -8,6 +8,7 @@ PDF→DWG Flask Blueprint — 多机调度路由。
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 
@@ -43,6 +44,18 @@ def _sse_broadcast(event, data):
     _broadcast(event, data)
 
 
+def _check_api_key():
+    """API 认证：session 登录 或 apikey 均可通过。"""
+    from flask import session
+    if session.get("user"):
+        return None
+    from .api import API_KEY
+    key = request.headers.get("X-API-Key") or request.args.get("apikey")
+    if API_KEY and key == API_KEY:
+        return None
+    return jsonify({"error": "unauthorized"}), 401
+
+
 
 def _load_workers_config():
     """加载 workers.json 配置"""
@@ -61,6 +74,9 @@ def _load_workers_config():
 
 @pdf2dwg_bp.route("/convert-pdf", methods=["POST"])
 def convert_pdf_batch():
+    err = _check_api_key()
+    if err:
+        return err
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "no files uploaded"}), 400
@@ -99,6 +115,9 @@ def convert_pdf_batch():
 
 @pdf2dwg_bp.route("/convert-pdf/add/<task_id>", methods=["POST"])
 def convert_pdf_add(task_id):
+    err = _check_api_key()
+    if err:
+        return err
     task = store.get_task(task_id)
     if not task or task.status != "running":
         return jsonify({"error": "task not found or not running"}), 404
@@ -124,14 +143,27 @@ def convert_pdf_add(task_id):
 
 @pdf2dwg_bp.route("/download-pdf-zip/<task_id>")
 def download_pdf_zip(task_id):
+    err = _check_api_key()
+    if err:
+        return err
     task = store.get_task(task_id)
     if not task or not task.zip_path or not os.path.exists(task.zip_path):
         return jsonify({"error": "no result"}), 404
-    return send_file(task.zip_path, as_attachment=True, download_name=f"pdf2dwg_{task_id}.zip")
+    resp = send_file(task.zip_path, as_attachment=True, download_name=f"pdf2dwg_{task_id}.zip")
+    @resp.call_on_close
+    def _cleanup():
+        if task.results_dir and os.path.isdir(task.results_dir):
+            shutil.rmtree(task.results_dir, ignore_errors=True)
+            log.info("PDF task %s results cleaned after download", task_id)
+        store._tasks.pop(task_id, None)
+    return resp
 
 
 @pdf2dwg_bp.route("/pdf-task/<task_id>")
 def get_pdf_task(task_id):
+    err = _check_api_key()
+    if err:
+        return err
     task = store.get_task(task_id)
     if not task:
         return jsonify({"error": "task not found"}), 404
@@ -140,4 +172,7 @@ def get_pdf_task(task_id):
 
 @pdf2dwg_bp.route("/pdf-tasks")
 def list_pdf_tasks():
+    err = _check_api_key()
+    if err:
+        return err
     return jsonify(store.list_tasks())
