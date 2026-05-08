@@ -67,57 +67,28 @@
          (vla-SetCustomScale layout 1.0 100.0)))))
 
 ;;; ------------------------------------------------------------
-;;; 单图框打印
+;;; 单图框打印（vla ActiveX 方式，无参数错位风险）
 ;;; ------------------------------------------------------------
-(defun ap:plot-frame (doc frame pdf-path / bounds ll ur paper-name orient
-                             printer plot-style pdf-fwd result)
+(defun ap:plot-frame (doc frame pdf-path / bounds layout plot pdf-fwd result)
   (setvar "CTAB" "Model")
+  (setvar "BACKGROUNDPLOT" 0)
+  (setvar "PUBLISHCOLLATE" 0)
 
   (setq bounds (ap:frame-get frame "bounds"))
-  (setq ll (car bounds)
-        ur (cadr bounds))
-  (setq paper-name (ap:frame-get frame "paper-match"))
-  (setq orient (ap:frame-get frame "orientation"))
-  (setq printer (ap:get-config-default "plot-device" "DWG To PDF.pc3"))
-  (setq plot-style (ap:get-config-default "plot-style" "monochrome.ctb"))
-
-  ;; 调试：打印使用的设备和 BACKGROUNDPLOT 值
-  (princ (strcat "\n    [DEBUG] printer=" printer " BACKGROUNDPLOT=" (itoa (getvar "BACKGROUNDPLOT"))))
-
-  ;; 纸张名转为 -PLOT 命令格式
-  (setq paper-name (ap:plot-paper-name paper-name))
-
-  ;; PDF 路径统一用正斜杠
+  (setq layout (vla-get-ActiveLayout doc))
+  (setq plot (vla-get-Plot doc))
   (setq pdf-fwd (vl-string-translate "\\" "/" pdf-path))
 
-  ;; 使用 -PLOT 命令（与 Python 流程一致）
-  (setq result
-    (vl-catch-all-apply
-      '(lambda ()
-         (setvar "BACKGROUNDPLOT" 0)
-         (setvar "PUBLISHCOLLATE" 0)
-         (setvar "FILEDIA" 0)
-         (setvar "CMDDIA" 0)
-         (setvar "EXPERT" 5)
-         (setvar "PROXYNOTICE" 0)
-         (setvar "DWGCHECK" 0)
-         (setvar "RECOVERYMODE" 0)
-         (setvar "FONTALT" "hztxt.shx")
-         (setvar "ATTDIA" 0)
-         (setvar "SIGWARN" 0)
-         (setvar "NOMUTT" 1)
-         (command "_.-PLOT" "Y" ""
-           printer
-           paper-name
-           "M"
-           (if (= orient "portrait") "P" "L")
-           "N"
-           "W"
-           (strcat (rtos (car ll) 2 2) "," (rtos (cadr ll) 2 2))
-           (strcat (rtos (car ur) 2 2) "," (rtos (cadr ur) 2 2))
-           "F" "C" "Y" plot-style "N" ""
-           pdf-fwd
-           "N" "Y"))))
+  ;; 页面设置：打印机、纸张、方向、样式、比例
+  (ap:apply-page-setup layout frame)
+  ;; 打印窗口裁剪
+  (ap:set-plot-window layout bounds)
+  ;; 居中打印
+  (vl-catch-all-apply '(lambda () (vla-put-CenterPlot layout :vlax-true)))
+
+  ;; vla 方式输出 PDF
+  (setq result (vl-catch-all-apply
+    '(lambda () (vla-PlotToFile plot pdf-fwd))))
 
   (if (vl-catch-all-error-p result)
     (progn
