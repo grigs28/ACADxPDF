@@ -123,6 +123,14 @@ def _sse_broadcast(event: str, data: dict):
 
 # ===================== Routes =====================
 
+# --- 统一请求日志 ---
+@app.before_request
+def _log_request():
+    if request.path.startswith(("/static/", "/stream")):
+        return
+    log.info("[%s] %s %s %s", request.remote_addr, request.method, request.path,
+             request.args.to_dict() if request.args else "")
+
 # --- SSO 登录 ---
 
 @app.route("/callback")
@@ -236,7 +244,7 @@ def convert():
         safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.dwg"
         path = os.path.join(upload_dir, safe_name)
         f.save(path)
-        task.add_file(f.filename, path)
+        task.add_file(safe_name, path, display_name=f.filename)
 
     store.start_task(task)
 

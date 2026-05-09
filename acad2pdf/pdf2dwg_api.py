@@ -23,6 +23,14 @@ pdf2dwg_bp = Blueprint("pdf2dwg", __name__,
                         static_folder="static", static_url_path="/static")
 
 
+@pdf2dwg_bp.before_request
+def _log_request():
+    if request.path.startswith("/static/"):
+        return
+    log.info("[%s] %s %s %s", request.remote_addr, request.method, request.path,
+             request.args.to_dict() if request.args else "")
+
+
 @pdf2dwg_bp.route("/index2.html")
 def index2():
     """PDF→DWG 增强版前端"""
@@ -103,7 +111,7 @@ def convert_pdf_batch():
         safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.pdf"
         p = os.path.join(upload_dir, safe_name)
         f.save(p)
-        task.add_file(f.filename, p)
+        task.add_file(safe_name, p, display_name=f.filename)
 
     store.start_task(task)
 
@@ -133,7 +141,7 @@ def convert_pdf_add(task_id):
         safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.pdf"
         p = os.path.join(upload_dir, safe_name)
         f.save(p)
-        task.add_file(f.filename, p)
+        task.add_file(safe_name, p, display_name=f.filename)
         added.append(f.filename)
 
     _sse_broadcast("pdf_task_add", {"task_id": task_id, "added": len(added), "total": task.total})

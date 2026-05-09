@@ -60,7 +60,7 @@ curl -X POST http://192.168.0.5:5557/convert-pdf \
   -F "files=@文件1.pdf"
 
 # 也可以用 URL 参数传 API Key
-curl http://192.168.0.5:5577/task/a1b2c3d4e5f6?apikey=axp-xxxxxxxx
+curl http://192.168.0.5:5557/task/a1b2c3d4e5f6?apikey=axp-xxxxxxxx
 ```
 
 > `192.168.0.5` 替换为主 API 机器的实际 IP。
@@ -188,6 +188,12 @@ curl -X POST http://localhost:5557/convert-pdf \
 
 响应格式同 DWG→PDF（返回 `task_id`，后台调度执行）。
 
+**响应**
+
+```json
+{"task_id": "f6e5d4c3b2a1", "status": "running", "total": 2}
+```
+
 #### 追加文件到运行中的任务
 
 ```
@@ -215,6 +221,10 @@ GET /pdf-tasks
 ```
 GET /download-pdf-zip/<task_id>
 认证：API Key 或 SSO 登录
+```
+
+```bash
+curl -O http://localhost:5557/download-pdf-zip/f6e5d4c3b2a1 -H "X-API-Key: axp-xxxxxxxx"
 ```
 
 ---
@@ -300,7 +310,7 @@ GET /config
 {
   "printer": "DWG To PDF.pc3",
   "plot_style": "monochrome.ctb",
-  "timeout": 180,
+  "timeout": 600,
   "border_keywords": "TK,TUKUANG,BORDER,FRAME,TITLE",
   "merge_borders": false,
   "auto_paper_size": true,
@@ -504,7 +514,7 @@ python -m acad2pdf.worker
 | WORK_DIR | 空（使用 `_work/`） | 工作目录 |
 | PRINTER | `DWG To PDF.pc3` | 打印机配置 |
 | PLOT_STYLE | `monochrome.ctb` | 打印样式 |
-| TIMEOUT | `180` | 单文件超时（秒） |
+| TIMEOUT | `600` | 单文件超时（秒） |
 | BORDER_KEYWORDS | `TK,TUKUANG,BORDER,FRAME,TITLE` | 图框块名关键字 |
 | MAX_WORKERS | `6` | Worker 线程数 |
 | API_HOST | `0.0.0.0` | 监听地址 |

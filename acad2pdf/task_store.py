@@ -21,9 +21,10 @@ class FileItem:
     STATUS_DONE = "done"
     STATUS_FAILED = "failed"
 
-    def __init__(self, file_id: str, name: str, source_path: str):
+    def __init__(self, file_id: str, name: str, source_path: str, display_name: str = ""):
         self.id = file_id
         self.name = name
+        self.display_name = display_name or name
         self.source_path = source_path
         self.status = self.STATUS_PENDING
         self.assigned_to = None
@@ -34,7 +35,7 @@ class FileItem:
     def to_dict(self):
         return {
             "id": self.id,
-            "name": self.name,
+            "name": self.display_name or self.name,
             "status": self.status,
             "assigned_to": self.assigned_to,
             "error": self.error,
@@ -59,9 +60,9 @@ class Task:
         self.ok_count = 0
         self.total_time = None
 
-    def add_file(self, name: str, source_path: str) -> FileItem:
+    def add_file(self, name: str, source_path: str, display_name: str = "") -> FileItem:
         file_id = f"f{len(self.files)+1}_{uuid.uuid4().hex[:4]}"
-        item = FileItem(file_id, name, source_path)
+        item = FileItem(file_id, name, source_path, display_name=display_name)
         self.files.append(item)
         return item
 

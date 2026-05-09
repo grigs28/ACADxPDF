@@ -17,12 +17,19 @@ log = logging.getLogger("acad2pdf")
 
 def _safe_filename(name: str) -> str:
     """保留中文的文件名清理：移除 Windows 不允许的字符，保留 Unicode。"""
-    name = os.path.basename(name).strip()
+    from urllib.parse import unquote
+    name = unquote(os.path.basename(name).strip())
     name = re.sub(r'[\\/*?:"<>|]', '_', name)
     name = name.strip('. ')
     return name or "output"
 
 dispatch_bp = Blueprint("dispatch", __name__)
+
+
+@dispatch_bp.before_request
+def _log_request():
+    log.info("[%s] %s %s %s", request.remote_addr, request.method, request.path,
+             request.args.to_dict() if request.args else "")
 
 
 def _check_api_key():
@@ -125,7 +132,12 @@ def report_result():
     output_files = []
     stem = os.path.splitext(f.name)[0]
     output_dir = os.path.join(task.results_dir, stem)
-    os.makedirs(output_dir, exist_ok=True)
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except OSError as ex:
+        log.error("Cannot create output dir %s: %s", output_dir, ex)
+        store.report_result(file_id, False, [], str(ex), elapsed, metadata)
+        return jsonify({"status": "ok", "warning": "output dir failed"})
 
     for uploaded in request.files.getlist("files"):
         if uploaded.filename:
@@ -170,7 +182,7 @@ def download_source(file_id):
     task, f = found
     if not os.path.exists(f.source_path):
         return jsonify({"error": "source file not found on disk"}), 404
-    return send_file(f.source_path, as_attachment=True, download_name=f.name)
+    return send_file(f.source_path, as_attachment=True, download_name=f.display_name or f.name)
 
 
 def _finalize_task(task):
@@ -181,12 +193,13 @@ def _finalize_task(task):
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in task.files:
             stem = os.path.splitext(f.name)[0]
+            display_stem = os.path.splitext(f.display_name or f.name)[0]
             fdir = os.path.join(task.results_dir, stem)
             if not os.path.isdir(fdir):
                 continue
             for name in sorted(os.listdir(fdir)):
                 if name.lower().endswith((".pdf", ".dwg", ".dxf")):
-                    zf.write(os.path.join(fdir, name), f"{stem}/{name}")
+                    zf.write(os.path.join(fdir, name), f"{display_stem}/{name}")
 
     task.zip_path = zip_path
     if os.path.exists(zip_path):

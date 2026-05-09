@@ -254,12 +254,15 @@ class Worker:
     def run_loop(self):
         """Worker 主循环（单线程拉取模式）。"""
         self._running = True
+        idle_wait = 2
         log.info("Worker %s loop started (capacity=%d)", self.worker_id, self.capacity)
         while self._running:
             files, srv_config = self.pull()
             if not files:
-                time.sleep(2)
+                time.sleep(idle_wait)
+                idle_wait = min(idle_wait + 2, 15)
                 continue
+            idle_wait = 2
             timeout = self._get_timeout(srv_config)
             for f in files:
                 if not self._running:
