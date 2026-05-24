@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
 using Autodesk.AutoCAD.ApplicationServices.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 
 [assembly: CommandClass(typeof(XlsxToDwg.Commands))]
@@ -48,6 +50,7 @@ public class Commands
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 var textStyleId = StyleSetup.EnsureTextStyle(tr, db, xlsxDoc.Font);
+                var boldTextStyleId = StyleSetup.EnsureBoldTextStyle(tr, db, xlsxDoc.Font);
                 var tableStyleId = StyleSetup.EnsureTableStyle(tr, db, textStyleId, xlsxDoc.DefaultTextHeight);
 
                 var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -64,7 +67,7 @@ public class Commands
                         }
                         else if (sec.Type == "table")
                         {
-                            EntityBuilder.AddTable(tr, modelSpace, sec, xlsxDoc.DefaultTextHeight, textStyleId, tableStyleId);
+                            EntityBuilder.AddTable(tr, modelSpace, sec, xlsxDoc.DefaultTextHeight, textStyleId, boldTextStyleId, tableStyleId);
                             tableCount++;
                         }
                     }
@@ -77,6 +80,48 @@ public class Commands
 
                 tr.Commit();
                 Log($"OK: {mtextCount} mtext, {tableCount} table, {errorCount} errors");
+
+                // 多页图框复制
+                if (xlsxDoc.NumPages > 1)
+                {
+                    using (var tr2 = db.TransactionManager.StartTransaction())
+                    {
+                        var bt2 = (BlockTable)tr2.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        var ms2 = (BlockTableRecord)tr2.GetObject(bt2[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                        // 收集模板原有实体（在 0,0 附近的）
+                        var templateIds = new List<ObjectId>();
+                        foreach (ObjectId id in ms2)
+                        {
+                            var ent = (Entity)tr2.GetObject(id, OpenMode.ForRead);
+                            if (ent is Table || ent is MText)
+                                continue;
+                            var ext = ent.GeometricExtents;
+                            if (ext.MinPoint.X < 100 && ext.MaxPoint.X < 90000
+                                && ext.MinPoint.Y > -100 && ext.MaxPoint.Y < 60000)
+                            {
+                                templateIds.Add(id);
+                            }
+                        }
+
+                        // 对 page 1..N-1 复制图框
+                        for (int pg = 1; pg < xlsxDoc.NumPages; pg++)
+                        {
+                            double offsetX = pg * (84100.0 + 2000.0);
+                            foreach (ObjectId tid in templateIds)
+                            {
+                                var srcEnt = (Entity)tr2.GetObject(tid, OpenMode.ForRead);
+                                var cloned = (Entity)srcEnt.Clone();
+                                var mat = Matrix3d.Displacement(new Vector3d(offsetX, 0, 0));
+                                cloned.TransformBy(mat);
+                                ms2.AppendEntity(cloned);
+                                tr2.AddNewlyCreatedDBObject(cloned, true);
+                            }
+                        }
+                        tr2.Commit();
+                        Log($"FRAME: duplicated for {xlsxDoc.NumPages} pages");
+                    }
+                }
             }
         }
         catch (System.Exception ex)

@@ -13,7 +13,7 @@ xlsx2json.py — xlsx → JSON 转换器（A1 多图布局）
 Usage:
     python xlsx2json.py [xlsx] [output_dir] [sheet_name] [max_rows]
 """
-import os, sys, io, json, hashlib, re
+import os, sys, io, json, hashlib, re, math
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -31,6 +31,7 @@ ROW_PT_MM = 0.353
 # A1 图框 (1:100)
 FRAME_W = 84100
 FRAME_H = 59400
+FRAME_GAP = 2000
 DRAW_LEFT = 2500
 DRAW_BOTTOM = 1000
 DRAW_RIGHT = 77100
@@ -69,20 +70,22 @@ def _est_line_width(text, font_h):
     return w
 
 
-def _calc_mtext_height(text, width, font_h=FONT_H):
-    """估算 MText 高度：根据文本渲染宽度和列宽估算行数。"""
+def _detect_heading_level(text):
+    """检测标题层级 → (level, text_height, bold)"""
+    if re.match(r'^[一二三四五六七八九十]+、', text):
+        return (1, 450, True)
+    if re.match(r'^[（(][一二三四五六七八九十]+[)）]', text):
+        return (2, 400, True)
+    return (0, 350, False)
+
+
+def _calc_row_height(text, width, font_h):
+    """单行文本在无边框 Table 中的行高。"""
     if not text:
-        return 0
-    lines = text.split('\\P')
-    total_lines = 0
-    for line in lines:
-        if not line:
-            total_lines += 1
-            continue
-        line_w = _est_line_width(line, font_h)
-        total_lines += max(1, int((line_w + width - 1) // width))
-    line_h = font_h * 1.3
-    return total_lines * line_h
+        return font_h * 1.5
+    line_w = _est_line_width(text, font_h)
+    num_wrap = max(1, math.ceil(line_w / width))
+    return math.ceil(num_wrap * font_h * 1.5)
 
 
 def analyze_sheet(ws, max_rows=None):
@@ -183,30 +186,66 @@ def analyze_sheet(ws, max_rows=None):
                 pt = dim.height if dim.height else 15
                 row_hs.append(round(pt * ROW_PT_MM * SCALE, 1))
 
+            # 裁剪尾部空列
+            actual_ncols = ncols
+            has_content_cols = set(c['col'] for c in cells if c['text'].strip())
+            if has_content_cols:
+                max_content_col = max(has_content_cols)
+                if max_content_col < ncols - 1:
+                    actual_ncols = max_content_col + 1
+                    cells = [c for c in cells if c['col'] < actual_ncols]
+                    merges = [m for m in merges if m['c1'] < actual_ncols]
+                    for m in merges:
+                        m['c2'] = min(m['c2'], actual_ncols - 1)
+                    trimmed_w = sum(col_ws[actual_ncols:])
+                    sec_col_ws = list(col_ws[:actual_ncols])
+                    # 均摊被裁剪列的宽度到剩余列
+                    if trimmed_w > 0 and len(sec_col_ws) > 0:
+                        extra = trimmed_w / len(sec_col_ws)
+                        sec_col_ws = [round(w + extra, 1) for w in sec_col_ws]
+                    row_hs_trimmed = row_hs
+                else:
+                    sec_col_ws = list(col_ws)
+                    row_hs_trimmed = row_hs
+            else:
+                sec_col_ws = list(col_ws)
+                row_hs_trimmed = row_hs
+
             raw_sec_list.append({
                 'type': 'table',
-                'nrows': nrows_sec, 'ncols': ncols,
-                'col_widths': col_ws,
-                'row_heights': row_hs,
+                'nrows': nrows_sec, 'ncols': actual_ncols,
+                'col_widths': sec_col_ws,
+                'row_heights': row_hs_trimmed,
                 'cells': cells, 'merges': merges,
                 'text_height': FONT_H,
-                # 章节标题（用于不可拆分分组）
                 'col_a_root': cell(s, 0)[:30],
             })
         else:
-            lines = []
+            # Text section → 1-column borderless table
+            cells = []
+            row_heights = []
             for ri in range(s, e + 1):
                 v = cell(ri, 1)  # col B via merge lookup
-                if v:
-                    lines.append(v)
-            if not lines:
+                if not v:
+                    continue
+                level, th, bold = _detect_heading_level(v)
+                cells.append({
+                    'row': len(row_heights), 'col': 0,
+                    'text': v, 'text_height': th, 'alignment': 4,
+                    'bold': bold,
+                })
+                row_heights.append(_calc_row_height(v, COL_W, th))
+            if not cells:
                 continue
-            text = '\\P'.join(lines)
             raw_sec_list.append({
-                'type': 'mtext',
-                'text': text,
+                'type': 'table',
+                'borderless': True,
+                'nrows': len(row_heights), 'ncols': 1,
+                'col_widths': [COL_W],
+                'row_heights': row_heights,
+                'cells': cells, 'merges': [],
                 'text_height': FONT_H,
-                'nrows_sec': nrows_sec,
+                'col_a_root': cell(s, 0)[:30],
             })
 
     return {
@@ -221,12 +260,14 @@ def _split_table_section(sec, max_h):
     """将一个大表格拆分为多个 chunk，每个 chunk 高度 ≤ max_h。
 
     返回 list[dict]，每个 dict 是一个独立的 TABLE section。
+    支持 row_borderless 列表同步切割。
     """
     row_hs = sec['row_heights']
     nrows = sec['nrows']
     ncols = sec['ncols']
     cells = sec['cells']
     merges = sec['merges']
+    row_bl = sec.get('row_borderless', [])
 
     chunks = []
     chunk_start = 0
@@ -235,7 +276,6 @@ def _split_table_section(sec, max_h):
     for ri in range(nrows):
         rh = row_hs[ri] if ri < len(row_hs) else 500
         if chunk_h + rh > max_h and ri > chunk_start:
-            # 当前 chunk 已满，保存
             chunks.append((chunk_start, ri - 1))
             chunk_start = ri
             chunk_h = rh
@@ -263,115 +303,186 @@ def _split_table_section(sec, max_h):
                 c_merges.append({'r1': lr1, 'c1': m['c1'], 'r2': lr2, 'c2': m['c2']})
 
         c_rhs = row_hs[rs:re + 1]
+        c_bl = row_bl[rs:re + 1] if row_bl else []
 
-        result.append({
+        sec_out = {
             'type': 'table',
             'nrows': cnr, 'ncols': ncols,
             'col_widths': sec['col_widths'],
             'row_heights': c_rhs,
             'cells': c_cells, 'merges': c_merges,
             'text_height': sec.get('text_height', FONT_H),
-        })
+        }
+        if c_bl:
+            sec_out['row_borderless'] = c_bl
+        result.append(sec_out)
 
     return result
 
 
-def layout_pages(analysis):
-    """将 raw sections 布局到 A1 多图。返回 sections list（带坐标）。"""
+def build_mega_table(analysis):
+    """将所有 raw sections 合并为一个 mega-table。
+
+    文本段行：1 cell at col 0，全列合并，无边框。
+    数据表行：cells 直接搬入，有边框。
+    """
     raw_sections = analysis['raw_sections']
     if not raw_sections:
-        return []
+        return None
 
-    font = analysis['font']
-    col_ws = analysis['col_ws']
-    max_col_h = CONTENT_H  # 52400
+    col_ws_orig = analysis['col_ws']
 
-    # 先拆分过高的表格
-    expanded = []
+    # 确定全局 max ncols（从有边框数据表）
+    max_ncols = 1
     for sec in raw_sections:
-        if sec['type'] == 'table':
-            h = _calc_table_height(sec['row_heights'])
-            if h > max_col_h:
-                expanded.extend(_split_table_section(sec, max_col_h))
-            else:
-                expanded.append(sec)
+        if not sec.get('borderless', False):
+            max_ncols = max(max_ncols, sec.get('ncols', 1))
+
+    # col_widths：用原始前 max_ncols 列，缩放到填满 COL_W
+    cw = list(col_ws_orig[:max_ncols])
+    total_cw = sum(cw)
+    if total_cw > 0:
+        scale = COL_W / total_cw
+        cw = [round(w * scale, 1) for w in cw]
+
+    all_cells = []
+    all_merges = []
+    all_row_heights = []
+    all_row_borderless = []
+    row_offset = 0
+
+    for sec in raw_sections:
+        is_borderless = sec.get('borderless', False)
+        sec_nrows = sec.get('nrows', 0)
+
+        if is_borderless:
+            # 文本段：每行 → 1 cell at col 0，全列合并
+            cell_idx = 0
+            for ri in range(sec_nrows):
+                # 查找对应的 cell
+                matching = [c for c in sec['cells'] if c['row'] == ri]
+                if not matching:
+                    # 空行
+                    all_row_heights.append(sec['row_heights'][ri] if ri < len(sec['row_heights']) else FONT_H * 1.5)
+                    all_row_borderless.append(True)
+                    continue
+
+                c = matching[0]
+                all_row_heights.append(sec['row_heights'][ri] if ri < len(sec['row_heights']) else FONT_H * 1.5)
+                all_row_borderless.append(True)
+
+                new_row = row_offset + ri
+                all_cells.append({
+                    'row': new_row, 'col': 0,
+                    'text': c['text'],
+                    'text_height': c.get('text_height', 0),
+                    'alignment': c.get('alignment', 4),
+                    'bold': c.get('bold', False),
+                })
+                # 全列合并
+                all_merges.append({'r1': new_row, 'c1': 0, 'r2': new_row, 'c2': max_ncols - 1})
+
+            row_offset += sec_nrows
         else:
-            expanded.append(sec)
+            # 数据表：cells 直接搬入，row 加偏移
+            for c in sec['cells']:
+                all_cells.append({
+                    **c,
+                    'row': c['row'] + row_offset,
+                })
+            for m in sec['merges']:
+                all_merges.append({
+                    'r1': m['r1'] + row_offset,
+                    'c1': m['c1'],
+                    'r2': m['r2'] + row_offset,
+                    'c2': m['c2'],
+                })
+
+            for ri in range(sec_nrows):
+                rh = sec['row_heights'][ri] if ri < len(sec['row_heights']) else 500
+                all_row_heights.append(rh)
+                all_row_borderless.append(False)
+
+            row_offset += sec_nrows
+
+    return {
+        'type': 'table',
+        'nrows': len(all_row_heights),
+        'ncols': max_ncols,
+        'col_widths': cw,
+        'row_heights': all_row_heights,
+        'cells': all_cells,
+        'merges': all_merges,
+        'text_height': FONT_H,
+        'row_borderless': all_row_borderless,
+    }
+
+
+def layout_pages(analysis):
+    """将 raw sections 合并为 mega-table，切分后布局到 A1 多图。"""
+    mega = build_mega_table(analysis)
+    if not mega or mega['nrows'] == 0:
+        return [], 0
+
+    max_col_h = CONTENT_H - 2000  # 52400 - 2000 = 50400
+    chunks = _split_table_section(mega, max_col_h)
 
     # 贪心装箱：3 列/页
     result_sections = []
     page_index = 0
     col_idx = 0
-    col_y = CONTENT_TOP  # 当前列的 Y 游标（从上往下）
+    col_y = CONTENT_TOP + 2000
 
-    for sec in expanded:
-        # 计算节段高度
-        if sec['type'] == 'table':
-            sec_h = _calc_table_height(sec['row_heights'])
-        else:
-            sec_h = _calc_mtext_height(sec.get('text', ''), COL_W, sec.get('text_height', FONT_H))
-            if sec_h <= 0:
-                sec_h = sec.get('nrows_sec', 1) * FONT_H * 1.3
-
-        # 安全下限
+    for chunk in chunks:
+        sec_h = _calc_table_height(chunk['row_heights'])
         sec_h = max(sec_h, FONT_H)
 
-        # 检查当前列是否能放
         remaining = col_y - DRAW_BOTTOM
         if sec_h > remaining:
-            # 换列
             col_idx += 1
             if col_idx >= COL_COUNT:
-                # 新页
                 page_index += 1
                 col_idx = 0
-            col_y = CONTENT_TOP
+            col_y = CONTENT_TOP + 2000
 
-        # 计算插入坐标
-        page_x = page_index * FRAME_W
+        page_x = page_index * (FRAME_W + FRAME_GAP)
         col_x = DRAW_LEFT + col_idx * (COL_W + COL_GAP)
         insert_x = page_x + col_x
         insert_y = col_y
 
-        if sec['type'] == 'mtext':
-            result_sections.append({
-                'type': 'mtext',
-                'text': sec['text'],
-                'insert': [round(insert_x, 0), round(insert_y, 0), 0.0],
-                'width': round(COL_W, 0),
-                'text_height': sec.get('text_height', FONT_H),
-                'bold': False,
-            })
-        else:
-            result_sections.append({
-                'type': 'table',
-                'insert': [round(insert_x, 0), round(insert_y, 0), 0.0],
-                'nrows': sec['nrows'],
-                'ncols': sec['ncols'],
-                'col_widths': sec['col_widths'],
-                'row_heights': sec['row_heights'],
-                'default_text_height': sec.get('text_height', FONT_H),
-                'title_suppressed': True,
-                'vert_margin': round(FONT_H / 3),
-                'horz_margin': round(FONT_H / 3),
-                'cells': sec['cells'],
-                'merges': sec['merges'],
-            })
+        sec_out = {
+            'type': 'table',
+            'insert': [round(insert_x, 0), round(insert_y, 0), 0.0],
+            'nrows': chunk['nrows'],
+            'ncols': chunk['ncols'],
+            'col_widths': chunk['col_widths'],
+            'row_heights': chunk['row_heights'],
+            'default_text_height': chunk.get('text_height', FONT_H),
+            'title_suppressed': True,
+            'cells': chunk['cells'],
+            'merges': chunk['merges'],
+        }
+        rb = chunk.get('row_borderless', [])
+        if rb:
+            sec_out['row_borderless'] = rb
+        result_sections.append(sec_out)
 
-        col_y -= (sec_h + 100)  # 100 间距
+        col_y -= sec_h
 
-    # 添加每页标题
+    # 添加每页标题（MText 居中）
     num_pages = page_index + 1
     for pi in range(num_pages):
-        px = pi * FRAME_W
+        px = pi * (FRAME_W + FRAME_GAP)
         cn = CN_NUMS[pi] if pi < len(CN_NUMS) else str(pi + 1)
+        title_x = px + DRAW_LEFT + DRAW_W / 2
         result_sections.append({
             'type': 'mtext',
             'text': f'绿色建筑设计专篇（建筑）{cn}',
-            'insert': [round(px + DRAW_LEFT, 0), round(DRAW_TOP + 200, 0), 0.0],
+            'insert': [round(title_x, 0), round(DRAW_TOP - 1000, 0), 0.0],
             'width': round(DRAW_W, 0),
             'text_height': 600,
             'bold': True,
+            'attachment': 'TopCenter',
         })
 
     return result_sections, num_pages
@@ -392,22 +503,20 @@ def extract_to_json(xlsx_path, output_dir=None, sheet_name=None, max_rows=None):
     analysis = analyze_sheet(ws, max_rows=max_rows)
 
     raw = analysis['raw_sections']
-    n_mtext = sum(1 for s in raw if s['type'] == 'mtext')
-    n_table = sum(1 for s in raw if s['type'] == 'table')
-    print(f"  Raw: {n_mtext} mtext, {n_table} table")
+    n_borderless = sum(1 for s in raw if s.get('borderless'))
+    n_table = sum(1 for s in raw if s['type'] == 'table' and not s.get('borderless'))
+    print(f"  Raw: {n_borderless} text(borderless), {n_table} table")
 
     print("Layout...")
     sections, num_pages = layout_pages(analysis)
     print(f"  Pages: {num_pages}, sections: {len(sections)}")
 
     for sec in sections:
-        if sec['type'] == 'mtext' and sec.get('text_height') == 600:
+        if sec['type'] == 'mtext':
             print(f"    PAGE TITLE: {sec['text']}")
-        elif sec['type'] == 'mtext':
-            t = sec['text'][:50].replace('\\P', ' | ')
-            print(f"    MTEXT: ({sec['insert'][0]:.0f},{sec['insert'][1]:.0f}) w={sec['width']:.0f} {t}")
         else:
-            print(f"    TABLE: ({sec['insert'][0]:.0f},{sec['insert'][1]:.0f}) "
+            bl = ' BORDERLESS' if sec.get('borderless') else ''
+            print(f"    TABLE{bl}: ({sec['insert'][0]:.0f},{sec['insert'][1]:.0f}) "
                   f"{sec['nrows']}×{sec['ncols']} cells={len(sec['cells'])} merges={len(sec['merges'])}")
 
     doc = {
@@ -416,6 +525,7 @@ def extract_to_json(xlsx_path, output_dir=None, sheet_name=None, max_rows=None):
         'font': analysis['font'],
         'default_text_height': FONT_H,
         'sections': sections,
+        'num_pages': num_pages,
     }
 
     stem = Path(xlsx_path).stem

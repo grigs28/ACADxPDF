@@ -23,7 +23,9 @@ public static class EntityBuilder
         mtext.TextHeight = sec.TextHeight > 0 ? sec.TextHeight : defaultTextHeight;
         mtext.Width = sec.Width;
         mtext.TextStyleId = textStyleId;
-        mtext.Attachment = AttachmentPoint.BottomLeft;
+        mtext.Attachment = sec.Attachment == "TopCenter"
+            ? AttachmentPoint.TopCenter
+            : AttachmentPoint.TopLeft;
         mtext.LineSpacingFactor = 1.2;
 
         modelSpace.AppendEntity(mtext);
@@ -36,6 +38,7 @@ public static class EntityBuilder
         SectionInfo sec,
         double defaultTextHeight,
         ObjectId textStyleId,
+        ObjectId boldTextStyleId,
         ObjectId tableStyleId)
     {
         if (sec.Insert == null || sec.Insert.Count < 3)
@@ -69,8 +72,6 @@ public static class EntityBuilder
             if (h > 0)
                 table.Rows[r].Height = h;
         }
-
-        // AutoCAD 2026: VertCellMargin/HorzCellMargin 已移除，跳过
 #pragma warning restore CS0618
 
         // 填充单元格
@@ -88,6 +89,10 @@ public static class EntityBuilder
             tc.TextHeight = th;
 
             tc.Alignment = (CellAlignment)cell.Alignment;
+
+            // 加粗：使用 bold 文字样式
+            if (cell.Bold && boldTextStyleId != ObjectId.Null)
+                tc.TextStyleId = boldTextStyleId;
         }
 
         // 合并单元格（逐个 try-catch 跳过无效范围）
@@ -107,6 +112,48 @@ public static class EntityBuilder
 
         // GenerateLayout 必须在 AppendEntity 之前调用
         table.GenerateLayout();
+
+        // 按行边框控制：row_borderless 行隐藏边框，数据行隐藏空单元格边框
+        for (int r = 0; r < sec.NRows; r++)
+        {
+            bool hideBorders = sec.RowBorderless != null
+                && r < sec.RowBorderless.Count && sec.RowBorderless[r];
+            if (hideBorders)
+            {
+                for (int c = 0; c < sec.NCols; c++)
+                {
+                    try
+                    {
+                        var borders = table.Cells[r, c].Borders;
+                        borders.Top.IsVisible = false;
+                        borders.Bottom.IsVisible = false;
+                        borders.Left.IsVisible = false;
+                        borders.Right.IsVisible = false;
+                    }
+                    catch { }
+                }
+            }
+            else
+            {
+                // 数据行：隐藏空单元格边框（处理 ncols < max_ncols 的尾列）
+                for (int c = 0; c < sec.NCols; c++)
+                {
+                    try
+                    {
+                        var tc = table.Cells[r, c];
+                        if (string.IsNullOrEmpty(tc.TextString))
+                        {
+                            var borders = tc.Borders;
+                            borders.Top.IsVisible = false;
+                            borders.Bottom.IsVisible = false;
+                            borders.Left.IsVisible = false;
+                            borders.Right.IsVisible = false;
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
 
         table.SuppressRegenerateTable(false);
 

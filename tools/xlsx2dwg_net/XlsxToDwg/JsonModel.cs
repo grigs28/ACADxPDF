@@ -22,6 +22,9 @@ public class XlsxDocument
 
     [JsonPropertyName("sections")]
     public List<SectionInfo> Sections { get; set; } = new();
+
+    [JsonPropertyName("num_pages")]
+    public int NumPages { get; set; } = 1;
 }
 
 /// <summary>
@@ -63,6 +66,9 @@ public class SectionInfo
     [JsonPropertyName("bold")]
     public bool Bold { get; set; }
 
+    [JsonPropertyName("attachment")]
+    public string? Attachment { get; set; }
+
     // --- Table 字段 ---
     [JsonPropertyName("nrows")]
     public int NRows { get; set; }
@@ -79,6 +85,9 @@ public class SectionInfo
     [JsonPropertyName("default_text_height")]
     public double DefaultTextHeight { get; set; }
 
+    [JsonPropertyName("borderless")]
+    public bool Borderless { get; set; }
+
     [JsonPropertyName("title_suppressed")]
     public bool TitleSuppressed { get; set; } = true;
 
@@ -93,6 +102,9 @@ public class SectionInfo
 
     [JsonPropertyName("merges")]
     public List<MergeInfo> Merges { get; set; } = new();
+
+    [JsonPropertyName("row_borderless")]
+    public List<bool> RowBorderless { get; set; } = new();
 }
 
 /// <summary>
@@ -114,6 +126,9 @@ public class CellInfo
 
     [JsonPropertyName("alignment")]
     public int Alignment { get; set; } = 5;
+
+    [JsonPropertyName("bold")]
+    public bool Bold { get; set; }
 }
 
 /// <summary>

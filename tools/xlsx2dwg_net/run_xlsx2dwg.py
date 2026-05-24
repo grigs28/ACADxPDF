@@ -21,7 +21,7 @@ ACCCORE = os.environ.get("ACAD_PATH", r"C:\opt\AutoCAD 2026\accoreconsole.exe")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DLL_DIR = os.path.join(SCRIPT_DIR, "XlsxToDwg")
 DLL_PATH = os.path.join(DLL_DIR, "bin", "Release", "XlsxToDwg.dll")
-DEFAULT_TEMPLATE = r"C:\opt\ACADxPDF\Template\mt.dwt"
+DEFAULT_TEMPLATE = r"C:\opt\ACADxPDF\Template\A1.dwt"
 
 
 def build_dll():

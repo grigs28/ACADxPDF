@@ -9,6 +9,7 @@ namespace XlsxToDwg;
 public static class StyleSetup
 {
     public const string TextStyleName = "XlsxSongTi";
+    public const string BoldTextStyleName = "XlsxSongTiBold";
     public const string TableStyleName = "XlsxTableStyle";
 
     /// <summary>
@@ -37,6 +38,28 @@ public static class StyleSetup
         // 设置字体
         var fi = font ?? new FontInfo();
         var fontDesc = new FontDescriptor(fi.Name, false, false, fi.Charset, fi.PitchAndFamily);
+        record.Font = fontDesc;
+
+        var styleId = textStyleTable.Add(record);
+        tr.AddNewlyCreatedDBObject(record, true);
+
+        return styleId;
+    }
+
+    public static ObjectId EnsureBoldTextStyle(Transaction tr, Database db, FontInfo? font)
+    {
+        var textStyleTable = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+
+        if (textStyleTable.Has(BoldTextStyleName))
+            return textStyleTable[BoldTextStyleName];
+
+        textStyleTable.UpgradeOpen();
+
+        var record = new TextStyleTableRecord();
+        record.Name = BoldTextStyleName;
+
+        var fi = font ?? new FontInfo();
+        var fontDesc = new FontDescriptor(fi.Name, true, false, fi.Charset, fi.PitchAndFamily);
         record.Font = fontDesc;
 
         var styleId = textStyleTable.Add(record);
