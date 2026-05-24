@@ -138,10 +138,12 @@ class Worker:
             }
             files = []
             if success and output_dir and os.path.isdir(output_dir):
-                for name in os.listdir(output_dir):
-                    fpath = os.path.join(output_dir, name)
-                    if os.path.isfile(fpath):
-                        files.append(("files", (name, open(fpath, "rb"))))
+                for root, dirs, fnames in os.walk(output_dir):
+                    for name in fnames:
+                        fpath = os.path.join(root, name)
+                        # 保留相对路径作为上传文件名（子目录结构）
+                        rel = os.path.relpath(fpath, output_dir).replace(os.sep, "/")
+                        files.append(("files", (rel, open(fpath, "rb"))))
             try:
                 h = {}
                 if self.api_key:

@@ -273,7 +273,11 @@ def convert_xlsx():
         return jsonify({"error": "no XLSX files"}), 400
 
     sheets_str = request.form.get("sheets", "").strip()
-    sheet_list = [s.strip() for s in sheets_str.split(",") if s.strip()] or None
+    # 接收 1-based 序号如 "1,2,3,4,5"，空=全部
+    try:
+        sheet_list = [int(s.strip()) for s in sheets_str.split(",") if s.strip()] or None
+    except ValueError:
+        sheet_list = None
 
     project_dir = os.path.dirname(os.path.dirname(__file__))
     task_id = uuid.uuid4().hex[:12]

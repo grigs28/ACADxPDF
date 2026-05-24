@@ -140,8 +140,12 @@ def report_result():
 
     for uploaded in request.files.getlist("files"):
         if uploaded.filename:
-            safe = _safe_filename(uploaded.filename)
-            dest = os.path.join(output_dir, safe)
+            # 保留子目录结构（xlsx2dwg: jianzhu/output_xxx.dwg）
+            rel_path = uploaded.filename.replace("/", os.sep).replace("\\", os.sep)
+            parts = rel_path.split(os.sep)
+            safe_parts = [_safe_filename(p) for p in parts]
+            dest = os.path.join(output_dir, *safe_parts)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
             uploaded.save(dest)
             output_files.append(dest)
 
