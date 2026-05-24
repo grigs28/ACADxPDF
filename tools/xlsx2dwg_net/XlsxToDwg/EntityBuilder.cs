@@ -270,6 +270,7 @@ public static class EntityBuilder
             tc.TextHeight = th;
             tc.Alignment = (CellAlignment)cell.Alignment;
 
+
             if (cell.Bold && boldTextStyleId != ObjectId.Null)
                 tc.TextStyleId = boldTextStyleId;
         }

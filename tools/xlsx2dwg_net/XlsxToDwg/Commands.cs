@@ -61,6 +61,11 @@ public class Commands
                 for (int i = 0; i < Math.Min(measuredHeights.Count, 10); i++)
                     Log($"  Row {i}: height={measuredHeights[i]:F1}");
 
+                // 文本行高 ×1.5 增加间距
+                for (int i = 0; i < measuredHeights.Count; i++)
+                    if (rowIsText[i])
+                        measuredHeights[i] *= 1.5;
+
                 // ── Pass 2: 切分 + 布局 ──
                 Log("Pass 2: SplitIntoChunks + CreateTables");
 
