@@ -6,6 +6,7 @@ ACADxPDF 是批量 DWG↔PDF 双向转换服务，提供 Web UI 和 REST API 两
 
 - **DWG→PDF**：上传 DWG 文件，自动检测图框，输出分页 PDF（支持多线程并发）
 - **PDF→DWG**：上传 PDF 文件，通过 AutoCAD PDFIMPORT 反向转换为 DWG
+- **XLSX→DWG**：上传 xlsx 文件，按专业（建筑/结构/给排水/暖通/电气）批量转换为 A1 图框 DWG
 
 两种转换共用统一的拉取式 Worker 调度系统，支持多机分布式。
 
@@ -555,3 +556,215 @@ python -m acad2pdf.worker
 - 转换完成后自动清理 `_work` 临时目录
 - 中文文件名完全支持（内部自动转换为 ASCII 安全名称处理）
 - 日志输出到 `logs/api.log`，按 20MB 轮转，保留 5 份
+
+---
+
+## XLSX→DWG 转换（全专业）
+
+上传 xlsx 文件，按专业（sheet）批量转换为 A1 图框 DWG。复用 dwg2pdf 的 Task/Worker/调度架构，支持多线程多机协同。
+
+### 上传转换
+
+```
+POST /convert-xlsx
+Content-Type: multipart/form-data
+认证：API Key
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| files | file[] | 是 | .xlsx 文件，支持多个同时上传 |
+| sheets | string | 否 | 专业序号（1-based，逗号分隔），不传则转换全部 sheet |
+
+**专业序号对照表**
+
+| 序号 | sheet 名 | 目录名 |
+|------|----------|--------|
+| 1 | 建筑 | jianzhu |
+| 2 | 结构 | jiegou |
+| 3 | 给排水 | geipaishui |
+| 4 | 暖通 | nuantong |
+| 5 | 电气 | dianqi |
+
+**响应（立即返回）**
+
+```json
+{
+  "task_id": "8596a10163d6",
+  "status": "running",
+  "total": 1
+}
+```
+
+**示例**
+
+```bash
+# 转换建筑专业（sheet 1）
+curl -X POST http://192.168.0.5:5557/convert-xlsx \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@设计文件.xlsx" \
+  -F "sheets=1"
+
+# 转换全部专业（5个sheet）
+curl -X POST http://192.168.0.5:5557/convert-xlsx \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@设计文件.xlsx" \
+  -F "sheets=1,2,3,4,5"
+
+# 不传 sheets 参数则转换所有 sheet
+curl -X POST http://192.168.0.5:5557/convert-xlsx \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@设计文件.xlsx"
+
+# 多文件同时转换
+curl -X POST http://192.168.0.5:5557/convert-xlsx \
+  -H "X-API-Key: axp-xxxxxxxx" \
+  -F "files=@项目A.xlsx" \
+  -F "files=@项目B.xlsx" \
+  -F "sheets=1,2,3,4,5"
+```
+
+### 查询任务状态
+
+与 DWG→PDF 共用同一接口：
+
+```
+GET /task/<task_id>
+认证：API Key
+```
+
+```json
+{
+  "id": "8596a10163d6",
+  "type": "xlsx2dwg",
+  "status": "done",
+  "total": 1,
+  "ok_count": 1,
+  "done_count": 1,
+  "total_time": 84.1,
+  "zip_size_kb": 1934.5,
+  "files": [
+    {
+      "id": "f1_22c8",
+      "name": "设计文件.xlsx",
+      "status": "done",
+      "assigned_to": "node-01",
+      "error": null
+    }
+  ]
+}
+```
+
+### 下载结果 ZIP
+
+与 DWG→PDF 共用同一接口：
+
+```
+GET /download/<task_id>
+认证：API Key
+```
+
+ZIP 包内容按专业分目录：
+
+```
+result.zip
+└── 设计文件/
+    ├── jianzhu/output_xxxx.dwg      ← 建筑
+    ├── jiegou/output_xxxx.dwg       ← 结构
+    ├── geipaishui/output_xxxx.dwg   ← 给排水
+    ├── nuantong/output_xxxx.dwg     ← 暖通
+    └── dianqi/output_xxxx.dwg       ← 电气
+```
+
+下载后自动清理临时文件。
+
+**示例**
+
+```bash
+# 下载结果
+curl -o result.zip http://192.168.0.5:5557/download/8596a10163d6 \
+  -H "X-API-Key: axp-xxxxxxxx"
+```
+
+### SSE 事件
+
+| 事件 | 说明 |
+|------|------|
+| `task_start` | 任务开始（同 dwg2pdf） |
+| `file_done` | 单文件转换完成，metadata 含 `sheets` 列表 |
+| `xlsx_task_done` | XLSX 任务全部完成 |
+
+**xlsx_task_done 数据**
+
+```json
+{
+  "task_id": "xxx",
+  "total_time": 84.1,
+  "ok_count": 1,
+  "total": 1,
+  "total_pdfs": 0,
+  "zip_size_kb": 1934.5
+}
+```
+
+### 完整调用流程
+
+```python
+import requests, time
+
+API = "http://192.168.0.5:5557"
+KEY = "axp-xxxxxxxx"
+HEADERS = {"X-API-Key": KEY}
+
+# 1. 上传转换
+r = requests.post(f"{API}/convert-xlsx", headers=HEADERS,
+    files={"files": open("设计文件.xlsx", "rb")},
+    data={"sheets": "1,2,3,4,5"})
+task_id = r.json()["task_id"]
+print(f"Task: {task_id}")
+
+# 2. 轮询状态
+while True:
+    r = requests.get(f"{API}/task/{task_id}", headers=HEADERS)
+    data = r.json()
+    if data["status"] in ("done", "failed"):
+        break
+    time.sleep(5)
+
+print(f"OK: {data['ok_count']}/{data['total']}, {data['total_time']}s")
+
+# 3. 下载 ZIP
+if data["ok_count"] > 0:
+    r = requests.get(f"{API}/download/{task_id}", headers=HEADERS)
+    with open("result.zip", "wb") as f:
+        f.write(r.content)
+    print(f"ZIP: {len(r.content):,} bytes")
+```
+
+### Worker 部署
+
+远程 Worker 需要 xlsx2dwg 工具文件，使用部署脚本：
+
+```bash
+# 在主 API 机器上执行，自动推送到所有 Worker
+python deploy_xlsx2dwg.py
+```
+
+部署内容包括：
+- `tools/xlsx2dwg_net/xlsx2json.py` — xlsx 解析器
+- `tools/xlsx2dwg_net/run_xlsx2dwg.py` — 转换编排器
+- `tools/xlsx2dwg_net/XlsxToDwg/bin/Release/XlsxToDwg.dll` — C# AutoCAD 插件
+- `acad2pdf/xlsx2dwg_worker.py` — Worker 转换逻辑
+
+远程 Worker 还需安装 `openpyxl`：
+
+```bash
+pip install openpyxl
+```
+
+### .env 新增配置
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| XLSX2DWG_DLL | 空（自动编译） | XlsxToDwg.dll 预编译路径 |
+| XLSX2DWG_TEMPLATE | `C:\opt\ACADxPDF\Template\A1.dwt` | A1 图框 DWT 模板 |
