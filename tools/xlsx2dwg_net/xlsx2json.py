@@ -242,7 +242,7 @@ def analyze_sheet(ws, max_rows=None):
             cells = []
             row_heights = []
             merges = []
-            ncols = 2 if has_right else 1
+            text_ncols = 2 if has_right else 1
 
             for ri in range(s, e + 1):
                 lv = cell(ri, 0)  # col A via merge lookup
@@ -291,8 +291,8 @@ def analyze_sheet(ws, max_rows=None):
             raw_sec_list.append({
                 'type': 'table',
                 'borderless': True,
-                'nrows': len(row_heights), 'ncols': ncols,
-                'col_widths': [COL_W] if ncols == 1 else [COL_W / 2, COL_W / 2],
+                'nrows': len(row_heights), 'ncols': text_ncols,
+                'col_widths': [COL_W] if text_ncols == 1 else [COL_W / 2, COL_W / 2],
                 'row_heights': row_heights,
                 'cells': cells, 'merges': merges,
                 'text_height': FONT_H,
