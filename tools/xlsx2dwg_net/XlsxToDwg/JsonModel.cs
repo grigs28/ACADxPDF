@@ -25,6 +25,12 @@ public class XlsxDocument
 
     [JsonPropertyName("num_pages")]
     public int NumPages { get; set; } = 1;
+
+    [JsonPropertyName("col_ws")]
+    public List<double> ColWidths { get; set; } = new();
+
+    [JsonPropertyName("ncols")]
+    public int Ncols { get; set; }
 }
 
 /// <summary>
@@ -105,6 +111,9 @@ public class SectionInfo
 
     [JsonPropertyName("row_borderless")]
     public List<bool> RowBorderless { get; set; } = new();
+
+    [JsonPropertyName("header_nrows")]
+    public int HeaderNRows { get; set; }
 }
 
 /// <summary>
@@ -129,6 +138,9 @@ public class CellInfo
 
     [JsonPropertyName("bold")]
     public bool Bold { get; set; }
+
+    [JsonPropertyName("borders")]
+    public string Borders { get; set; } = "";
 }
 
 /// <summary>

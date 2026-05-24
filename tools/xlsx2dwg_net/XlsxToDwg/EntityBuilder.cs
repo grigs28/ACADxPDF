@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
@@ -7,6 +9,16 @@ namespace XlsxToDwg;
 
 public static class EntityBuilder
 {
+    private static void Log(string msg)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), "xlsx2dwg_cs.log");
+            File.AppendAllText(path, $"[{DateTime.Now:HH:mm:ss.fff}] EB: {msg}\n", Encoding.UTF8);
+        }
+        catch { }
+    }
+
     public static void AddMText(
         Transaction tr,
         BlockTableRecord modelSpace,
@@ -156,6 +168,235 @@ public static class EntityBuilder
         }
 
         table.SuppressRegenerateTable(false);
+
+        modelSpace.AppendEntity(table);
+        tr.AddNewlyCreatedDBObject(table, true);
+    }
+
+    public static void AddTableFromChunk(
+        Transaction tr,
+        BlockTableRecord modelSpace,
+        ObjectId tableStyleId,
+        ObjectId textStyleId,
+        ObjectId boldTextStyleId,
+        double defaultTextHeight,
+        List<double> colWidths,
+        int startRow, int endRow,
+        int headerStartRow, int headerEndRow,
+        List<double> measuredHeights,
+        List<CellInfo> allCells,
+        List<MergeInfo> allMerges,
+        List<bool> rowIsText,
+        int maxNcols,
+        Point3d insertPoint)
+    {
+        int dataRows = endRow - startRow + 1;
+        int headerNRows = (headerStartRow >= 0) ? (headerEndRow - headerStartRow + 1) : 0;
+        int totalRows = headerNRows + dataRows;
+        if (totalRows <= 0 || maxNcols <= 0) return;
+
+        // +1 行给 AutoCAD 的 Title Row（row 0），我们的内容从 row 1 开始
+        // 这样 IsTitleSuppressed=true 隐藏 row 0（空的 Title Row），不影响我们的内容
+        int tableRows = 1 + totalRows;
+
+        var table = new Table();
+        table.SetSize(tableRows, maxNcols);
+        table.Position = insertPoint;
+        table.TableStyle = tableStyleId;
+
+        table.SuppressRegenerateTable(true);
+
+#pragma warning disable CS0618
+        table.IsTitleSuppressed = true;
+#pragma warning restore CS0618
+
+        // 列宽
+        for (int c = 0; c < maxNcols; c++)
+        {
+            double w = c < colWidths.Count ? colWidths[c] : 1000;
+            if (w > 0)
+                table.Columns[c].Width = w;
+        }
+
+        // Title row (row 0) 设最小高度
+        table.Rows[0].Height = 1;
+
+        // 行高：表头行 row 1+，数据行 row (1+headerNRows)+
+        for (int r = 0; r < headerNRows; r++)
+        {
+            int srcRow = headerStartRow + r;
+            double h = (srcRow >= 0 && srcRow < measuredHeights.Count) ? measuredHeights[srcRow] : 300;
+            if (h > 0)
+                table.Rows[1 + r].Height = h;
+        }
+        for (int r = 0; r < dataRows; r++)
+        {
+            int srcRow = startRow + r;
+            double h = (srcRow >= 0 && srcRow < measuredHeights.Count) ? measuredHeights[srcRow] : 300;
+            if (h > 0)
+                table.Rows[1 + headerNRows + r].Height = h;
+        }
+
+        // 构建边框查找表
+        var borderMap = new Dictionary<(int, int), string>();
+        foreach (var cell in allCells)
+        {
+            if (!string.IsNullOrEmpty(cell.Borders))
+                borderMap[(cell.Row, cell.Col)] = cell.Borders;
+        }
+
+        // 行映射：mega-table srcRow → local table row (-1 if not in this chunk)
+        // +1 offset: row 0 是被隐藏的 Title Row，我们的内容从 row 1 开始
+        int MapRow(int srcRow)
+        {
+            if (headerStartRow >= 0 && srcRow >= headerStartRow && srcRow <= headerEndRow)
+                return 1 + (srcRow - headerStartRow);
+            if (srcRow >= startRow && srcRow <= endRow)
+                return 1 + headerNRows + (srcRow - startRow);
+            return -1;
+        }
+
+        // 填 cells
+        foreach (var cell in allCells)
+        {
+            int lr = MapRow(cell.Row);
+            if (lr < 0 || cell.Col < 0 || cell.Col >= maxNcols) continue;
+
+            var tc = table.Cells[lr, cell.Col];
+            if (!string.IsNullOrEmpty(cell.Text))
+                tc.TextString = cell.Text;
+
+            double th = cell.TextHeight > 0 ? cell.TextHeight : defaultTextHeight;
+            tc.TextHeight = th;
+            tc.Alignment = (CellAlignment)cell.Alignment;
+
+            if (cell.Bold && boldTextStyleId != ObjectId.Null)
+                tc.TextStyleId = boldTextStyleId;
+        }
+
+        // 合并（header 和 data 分别处理，不允许跨区域合并）
+        // +1 offset for Title Row
+        // Header merges
+        if (headerNRows > 0)
+        {
+            foreach (var merge in allMerges)
+            {
+                if (merge.R1 < headerStartRow || merge.R2 > headerEndRow) continue;
+                int lr1 = 1 + (merge.R1 - headerStartRow);
+                int lr2 = 1 + (merge.R2 - headerStartRow);
+                try
+                {
+                    int c1 = Math.Max(merge.C1, 0);
+                    int c2 = Math.Min(merge.C2, maxNcols - 1);
+                    if (lr1 > lr2 || c1 > c2) continue;
+                    var range = CellRange.Create(table, lr1, c1, lr2, c2);
+                    table.MergeCells(range);
+                }
+                catch { }
+            }
+        }
+        // Data merges
+        foreach (var merge in allMerges)
+        {
+            if (merge.R2 < startRow || merge.R1 > endRow) continue;
+            int lr1 = (merge.R1 < startRow) ? 0 : merge.R1 - startRow;
+            int lr2 = (merge.R2 > endRow) ? dataRows - 1 : merge.R2 - startRow;
+            try
+            {
+                int c1 = Math.Max(merge.C1, 0);
+                int c2 = Math.Min(merge.C2, maxNcols - 1);
+                if (lr1 > lr2 || c1 > c2) continue;
+                var range = CellRange.Create(table, 1 + headerNRows + lr1, c1, 1 + headerNRows + lr2, c2);
+                table.MergeCells(range);
+            }
+            catch { }
+        }
+
+        // GenerateLayout 必须在 AppendEntity 之前
+        table.GenerateLayout();
+
+        // GenerateLayout 会重置合并子单元格的 TextHeight 为 -1
+        // 重新填充所有 header 行的 cell 内容（+1 offset）
+        if (headerNRows > 0)
+        {
+            foreach (var cell in allCells)
+            {
+                int lr = MapRow(cell.Row);
+                if (lr < 0 || lr < 1 || lr > headerNRows || cell.Col < 0 || cell.Col >= maxNcols) continue;
+                try
+                {
+                    var tc = table.Cells[lr, cell.Col];
+                    if (!string.IsNullOrEmpty(cell.Text))
+                        tc.TextString = cell.Text;
+                    double th = cell.TextHeight > 0 ? cell.TextHeight : defaultTextHeight;
+                    tc.TextHeight = th;
+                    tc.Alignment = (CellAlignment)cell.Alignment;
+                    if (cell.Bold && boldTextStyleId != ObjectId.Null)
+                        tc.TextStyleId = boldTextStyleId;
+                }
+                catch { }
+            }
+        }
+
+        // 逐单元格控制边框（+1 offset for Title Row，跳过 row 0）
+        for (int r = 0; r < totalRows; r++)
+        {
+            int localRow = 1 + r;  // +1 for Title Row
+            // 反推 srcRow
+            int srcRow;
+            if (r < headerNRows)
+                srcRow = headerStartRow + r;
+            else
+                srcRow = startRow + (r - headerNRows);
+
+            bool isTextRow = srcRow >= 0 && srcRow < rowIsText.Count && rowIsText[srcRow];
+
+            for (int c = 0; c < maxNcols; c++)
+            {
+                try
+                {
+                    if (isTextRow)
+                    {
+                        var borders = table.Cells[localRow, c].Borders;
+                        borders.Top.IsVisible = false;
+                        borders.Bottom.IsVisible = false;
+                        borders.Left.IsVisible = false;
+                        borders.Right.IsVisible = false;
+                    }
+                    else
+                    {
+                        if (borderMap.TryGetValue((srcRow, c), out var brd) && brd.Length > 0)
+                        {
+                            var borders = table.Cells[localRow, c].Borders;
+                            borders.Top.IsVisible = brd.Contains('T');
+                            borders.Bottom.IsVisible = brd.Contains('B');
+                            borders.Left.IsVisible = brd.Contains('L');
+                            borders.Right.IsVisible = brd.Contains('R');
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        table.SuppressRegenerateTable(false);
+
+        // Diagnostic: dump header row AFTER all processing (only chunks with header)
+        if (headerNRows > 0)
+        {
+            Log($"  POST chunk {startRow}-{endRow} hdr[{headerStartRow}-{headerEndRow}]:");
+            for (int c = 0; c < Math.Min(maxNcols, 19); c++)
+            {
+                try
+                {
+                    string txt = table.Cells[1, c].TextString ?? "";
+                    if (txt.Length > 20) txt = txt.Substring(0, 20);
+                    double? th = table.Cells[1, c].TextHeight;
+                    Log($"    POST[1,{c}] txt='{txt}' th={th ?? 0:F0}");
+                }
+                catch (Exception ex) { Log($"    POST[1,{c}] ERR: {ex.Message}"); }
+            }
+        }
 
         modelSpace.AppendEntity(table);
         tr.AddNewlyCreatedDBObject(table, true);
