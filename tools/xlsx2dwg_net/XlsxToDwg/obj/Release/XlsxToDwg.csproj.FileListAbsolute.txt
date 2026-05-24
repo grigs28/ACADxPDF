@@ -1,0 +1,13 @@
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.csproj.AssemblyReference.cache
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.GeneratedMSBuildEditorConfig.editorconfig
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.AssemblyInfoInputs.cache
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.AssemblyInfo.cs
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.csproj.CoreCompileInputs.cache
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.sourcelink.json
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\bin\Release\XlsxToDwg.deps.json
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\bin\Release\XlsxToDwg.dll
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\bin\Release\XlsxToDwg.pdb
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.dll
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\refint\XlsxToDwg.dll
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\XlsxToDwg.pdb
+C:\opt\ACADxPDF\tools\xlsx2dwg_net\XlsxToDwg\obj\Release\ref\XlsxToDwg.dll

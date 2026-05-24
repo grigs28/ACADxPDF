@@ -9,6 +9,8 @@
 t3/
 input/
 output/
+_test_output/
+.test/
 
 # Temp / logs
 _temp_*
