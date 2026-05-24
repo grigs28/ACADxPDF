@@ -339,6 +339,19 @@ public static class EntityBuilder
             }
         }
 
+        // 隐藏 Title Row（row 0）的左、右、上边框
+        for (int c = 0; c < maxNcols; c++)
+        {
+            try
+            {
+                var borders = table.Cells[0, c].Borders;
+                borders.Top.IsVisible = false;
+                borders.Left.IsVisible = false;
+                borders.Right.IsVisible = false;
+            }
+            catch { }
+        }
+
         // 逐单元格控制边框（+1 offset for Title Row，跳过 row 0）
         for (int r = 0; r < totalRows; r++)
         {

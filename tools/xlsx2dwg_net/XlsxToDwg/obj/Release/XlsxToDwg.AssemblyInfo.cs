@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("XlsxToDwg")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a3851c2a1aaa054cecb079e1d0ceb61578b49170")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c0ba6577b5e81b1b9e5ac62d05292ed0d3b2b3b7")]
 [assembly: System.Reflection.AssemblyProductAttribute("XlsxToDwg")]
 [assembly: System.Reflection.AssemblyTitleAttribute("XlsxToDwg")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
