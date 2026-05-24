@@ -230,29 +230,71 @@ def analyze_sheet(ws, max_rows=None):
                 'col_a_root': cell(s, 0)[:30],
             })
         else:
-            # Text section → 1-column borderless table
+            # Text section → detect dual-column (left col 0-8, right col 9+)
+            # 检查数据行的 col 9 是否有独立内容（排除被左列全行合并覆盖的情况）
+            has_right = False
+            for ri in range(s, e + 1):
+                raw_v = ws.cell(ri + 1, 10).value  # col J 原始值，不经合并查找
+                if raw_v and str(raw_v).strip():
+                    has_right = True
+                    break
+
             cells = []
             row_heights = []
+            merges = []
+            ncols = 2 if has_right else 1
+
             for ri in range(s, e + 1):
-                v = cell(ri, 1)  # col B via merge lookup
-                if not v:
-                    continue
-                level, th, bold = _detect_heading_level(v)
-                cells.append({
-                    'row': len(row_heights), 'col': 0,
-                    'text': v, 'text_height': th, 'alignment': 4,
-                    'bold': bold,
-                })
-                row_heights.append(0)
+                lv = cell(ri, 0)  # col A via merge lookup
+                rv = ws.cell(ri + 1, 10).value if has_right else ''  # col J 原始值
+                if rv:
+                    rv = str(rv).strip()
+
+                # 标题行（无右列内容，且左列有内容）
+                if has_right and not rv and lv:
+                    level, th, bold = _detect_heading_level(lv)
+                    cells.append({
+                        'row': len(row_heights), 'col': 0,
+                        'text': lv, 'text_height': th, 'alignment': 4,
+                        'bold': bold,
+                    })
+                    merges.append({'r1': len(row_heights), 'c1': 0,
+                                   'r2': len(row_heights), 'c2': 1})
+                    row_heights.append(0)
+                elif has_right and (lv or rv):
+                    # 双列数据行
+                    if lv:
+                        cells.append({
+                            'row': len(row_heights), 'col': 0,
+                            'text': lv, 'text_height': 0, 'alignment': 5,
+                        })
+                    if rv:
+                        cells.append({
+                            'row': len(row_heights), 'col': 1,
+                            'text': rv, 'text_height': 0, 'alignment': 5,
+                        })
+                    row_heights.append(0)
+                elif not has_right:
+                    v = lv or cell(ri, 1)
+                    if not v:
+                        continue
+                    level, th, bold = _detect_heading_level(v)
+                    cells.append({
+                        'row': len(row_heights), 'col': 0,
+                        'text': v, 'text_height': th, 'alignment': 4,
+                        'bold': bold,
+                    })
+                    row_heights.append(0)
+
             if not cells:
                 continue
             raw_sec_list.append({
                 'type': 'table',
                 'borderless': True,
-                'nrows': len(row_heights), 'ncols': 1,
-                'col_widths': [COL_W],
+                'nrows': len(row_heights), 'ncols': ncols,
+                'col_widths': [COL_W] if ncols == 1 else [COL_W / 2, COL_W / 2],
                 'row_heights': row_heights,
-                'cells': cells, 'merges': [],
+                'cells': cells, 'merges': merges,
                 'text_height': FONT_H,
                 'col_a_root': cell(s, 0)[:30],
             })
