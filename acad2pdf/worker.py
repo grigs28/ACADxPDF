@@ -191,6 +191,27 @@ class Worker:
                         "pdf_count": len(result.borders) if result.borders else (1 if result.success else 0),
                     },
                 }
+            elif task_type == "xlsx2dwg":
+                from .xlsx2dwg_worker import convert_one_xlsx
+                result = convert_one_xlsx(
+                    local_path, output_dir,
+                    sheets=params.get("sheets"),
+                    dll_path=params.get("dll_path"),
+                    template=params.get("template"),
+                    timeout=effective_timeout,
+                )
+                # 复制源 xlsx 到输出目录
+                if result["ok"] and os.path.isfile(local_path):
+                    xlsx_name = file_info.get("file_name", os.path.basename(local_path))
+                    shutil.copy2(local_path, os.path.join(output_dir, xlsx_name))
+                elapsed = round(time.time() - t0, 1)
+                return {
+                    "success": result["ok"],
+                    "elapsed": elapsed,
+                    "output_dir": output_dir if result["ok"] else "",
+                    "error": result.get("error", ""),
+                    "metadata": {"sheets": list(result.get("outputs", {}).keys())},
+                }
             else:  # pdf2dwg
                 from .pdf2dwg_worker import convert_one_pdf
                 work_dir = os.path.join(output_dir, "_work")

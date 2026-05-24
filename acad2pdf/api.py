@@ -81,6 +81,8 @@ runtime_config = {
     "max_workers": MAX_WORKERS,
     "drawing_scale": 1.0,
     "drawing_scales": [1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 500, 1000],
+    "xlsx2dwg_dll": os.environ.get("XLSX2DWG_DLL", ""),
+    "xlsx2dwg_template": os.environ.get("XLSX2DWG_TEMPLATE", r"C:\opt\ACADxPDF\Template\A1.dwt"),
 }
 
 # --- SSE ---
@@ -251,6 +253,53 @@ def convert():
     _sse_broadcast("task_start", {"task_id": task.id, "total": task.total,
                                     "workers": runtime_config["max_workers"]})
     log.info("Task %s: %d DWG files queued", task.id, task.total)
+
+    return jsonify({"task_id": task.id, "status": "running", "total": task.total})
+
+
+@app.route("/convert-xlsx", methods=["POST"])
+def convert_xlsx():
+    """上传 xlsx 文件，批量转 DWG（全专业）。"""
+    err = _check_api_key()
+    if err:
+        return err
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "no files uploaded"}), 400
+
+    xlsx_files = [f for f in files
+                   if f.filename and f.filename.lower().endswith((".xlsx", ".xls"))]
+    if not xlsx_files:
+        return jsonify({"error": "no XLSX files"}), 400
+
+    sheets_str = request.form.get("sheets", "").strip()
+    sheet_list = [s.strip() for s in sheets_str.split(",") if s.strip()] or None
+
+    project_dir = os.path.dirname(os.path.dirname(__file__))
+    task_id = uuid.uuid4().hex[:12]
+    results_dir = os.path.join(
+        WORK_DIR or os.path.join(project_dir, "output"), task_id)
+
+    task = store.create_task("xlsx2dwg", {
+        "sheets": sheet_list,
+        "dll_path": runtime_config.get("xlsx2dwg_dll", ""),
+        "template": runtime_config.get("xlsx2dwg_template", ""),
+    }, results_dir=results_dir)
+
+    upload_dir = os.path.join(results_dir, "upload")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    for f in xlsx_files:
+        item = task.add_file(f.filename, "", display_name=f.filename)
+        path = os.path.join(upload_dir, item.name)
+        f.save(path)
+        item.source_path = path
+
+    store.start_task(task)
+
+    _sse_broadcast("task_start", {"task_id": task.id, "total": task.total,
+                                    "workers": runtime_config["max_workers"]})
+    log.info("Task %s: %d XLSX files queued (xlsx2dwg)", task.id, task.total)
 
     return jsonify({"task_id": task.id, "status": "running", "total": task.total})
 

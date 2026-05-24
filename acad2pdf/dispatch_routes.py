@@ -196,11 +196,23 @@ def _finalize_task(task):
             fdir = os.path.join(task.results_dir, stem)
             if not os.path.isdir(fdir):
                 continue
-            for name in sorted(os.listdir(fdir)):
-                if name.lower().endswith((".pdf", ".dwg", ".dxf")):
-                    # 将安全文件名替换为中文显示名
-                    arc_name = name.replace(stem, display_stem, 1)
-                    zf.write(os.path.join(fdir, name), f"{display_stem}/{arc_name}")
+
+            if task.type == "xlsx2dwg":
+                # xlsx2dwg：按专业子目录打包（建筑/结构/水/暖/电）
+                for prof_name in sorted(os.listdir(fdir)):
+                    prof_dir = os.path.join(fdir, prof_name)
+                    if not os.path.isdir(prof_dir):
+                        continue
+                    for dwg_name in sorted(os.listdir(prof_dir)):
+                        if dwg_name.lower().endswith(".dwg"):
+                            zf.write(os.path.join(prof_dir, dwg_name),
+                                     f"{display_stem}/{prof_name}/{dwg_name}")
+            else:
+                # dwg2pdf / pdf2dwg：原有逻辑
+                for name in sorted(os.listdir(fdir)):
+                    if name.lower().endswith((".pdf", ".dwg", ".dxf")):
+                        arc_name = name.replace(stem, display_stem, 1)
+                        zf.write(os.path.join(fdir, name), f"{display_stem}/{arc_name}")
 
     task.zip_path = zip_path
     if os.path.exists(zip_path):
@@ -214,7 +226,8 @@ def _finalize_task(task):
             if f.status == "done" and os.path.isdir(fdir):
                 total_pdfs += len([n for n in os.listdir(fdir) if n.lower().endswith(".pdf")])
 
-    event = "task_done" if task.type == "dwg2pdf" else "pdf_task_done"
+    event = {"dwg2pdf": "task_done", "pdf2dwg": "pdf_task_done",
+             "xlsx2dwg": "xlsx_task_done"}.get(task.type, "task_done")
     _sse_broadcast(event, {
         "task_id": task.id,
         "total_time": task.total_time,
