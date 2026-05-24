@@ -48,36 +48,72 @@ public static class TableBuilder
 
             if (sec.Borderless)
             {
-                // 文本段：每行 -> 1 cell at col 0，全列合并，行高设 0（自动计算）
+                int mid = maxNcols / 2;
                 for (int ri = 0; ri < secNrows; ri++)
                 {
                     allRowHeights.Add(0);
                     rowIsText.Add(true);
 
-                    // 查找该行的 cells
                     var matching = new List<CellInfo>();
                     foreach (var c in sec.Cells)
                     {
                         if (c.Row == ri) matching.Add(c);
                     }
 
-                    if (matching.Count > 0)
+                    if (matching.Count == 0) continue;
+
+                    if (sec.NCols <= 1)
                     {
-                        var c = matching[0];
                         allCells.Add(new CellInfo
                         {
-                            Row = rowOffset + ri,
-                            Col = 0,
-                            Text = c.Text,
-                            TextHeight = c.TextHeight,
-                            Alignment = c.Alignment,
-                            Bold = c.Bold
+                            Row = rowOffset + ri, Col = 0,
+                            Text = matching[0].Text, TextHeight = matching[0].TextHeight,
+                            Alignment = matching[0].Alignment, Bold = matching[0].Bold
                         });
                         allMerges.Add(new MergeInfo
                         {
                             R1 = rowOffset + ri, C1 = 0,
                             R2 = rowOffset + ri, C2 = maxNcols - 1
                         });
+                    }
+                    else
+                    {
+                        bool isTitleRow = false;
+                        foreach (var m in sec.Merges)
+                            if (m.R1 == ri && m.C2 >= sec.NCols - 1) { isTitleRow = true; break; }
+
+                        if (isTitleRow)
+                        {
+                            allCells.Add(new CellInfo
+                            {
+                                Row = rowOffset + ri, Col = 0,
+                                Text = matching[0].Text, TextHeight = matching[0].TextHeight,
+                                Alignment = matching[0].Alignment, Bold = matching[0].Bold
+                            });
+                            allMerges.Add(new MergeInfo
+                            {
+                                R1 = rowOffset + ri, C1 = 0,
+                                R2 = rowOffset + ri, C2 = maxNcols - 1
+                            });
+                        }
+                        else
+                        {
+                            foreach (var c in matching)
+                            {
+                                int mc = c.Col == 0 ? 0 : mid;
+                                allCells.Add(new CellInfo
+                                {
+                                    Row = rowOffset + ri, Col = mc,
+                                    Text = c.Text, TextHeight = c.TextHeight,
+                                    Alignment = c.Alignment, Bold = c.Bold
+                                });
+                                allMerges.Add(new MergeInfo
+                                {
+                                    R1 = rowOffset + ri, C1 = mc,
+                                    R2 = rowOffset + ri, C2 = c.Col == 0 ? mid - 1 : maxNcols - 1
+                                });
+                            }
+                        }
                     }
                 }
             }

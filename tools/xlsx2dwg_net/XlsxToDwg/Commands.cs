@@ -88,15 +88,40 @@ public class Commands
                     int secStart = rowOffset;
                     if (sec.Borderless)
                     {
+                        int mid = maxNcols / 2;
                         for (int ri = 0; ri < sec.NRows; ri++)
                         {
                             var matching = new List<CellInfo>();
                             foreach (var c in sec.Cells) if (c.Row == ri) matching.Add(c);
-                            if (matching.Count > 0)
+                            if (matching.Count == 0) continue;
+
+                            if (sec.NCols <= 1)
                             {
-                                var c = matching[0];
-                                allCells.Add(new CellInfo { Row = rowOffset + ri, Col = 0, Text = c.Text, TextHeight = c.TextHeight, Alignment = c.Alignment, Bold = c.Bold });
+                                // 单列文本：合并全宽
+                                allCells.Add(new CellInfo { Row = rowOffset + ri, Col = 0, Text = matching[0].Text, TextHeight = matching[0].TextHeight, Alignment = matching[0].Alignment, Bold = matching[0].Bold });
                                 allMerges.Add(new MergeInfo { R1 = rowOffset + ri, C1 = 0, R2 = rowOffset + ri, C2 = maxNcols - 1 });
+                            }
+                            else
+                            {
+                                // 双列文本：标题行合并全宽，数据行左右分列
+                                bool isTitleRow = false;
+                                foreach (var m in sec.Merges)
+                                    if (m.R1 == ri && m.C2 >= sec.NCols - 1) { isTitleRow = true; break; }
+
+                                if (isTitleRow)
+                                {
+                                    allCells.Add(new CellInfo { Row = rowOffset + ri, Col = 0, Text = matching[0].Text, TextHeight = matching[0].TextHeight, Alignment = matching[0].Alignment, Bold = matching[0].Bold });
+                                    allMerges.Add(new MergeInfo { R1 = rowOffset + ri, C1 = 0, R2 = rowOffset + ri, C2 = maxNcols - 1 });
+                                }
+                                else
+                                {
+                                    foreach (var c in matching)
+                                    {
+                                        int mc = c.Col == 0 ? 0 : mid;
+                                        allCells.Add(new CellInfo { Row = rowOffset + ri, Col = mc, Text = c.Text, TextHeight = c.TextHeight, Alignment = c.Alignment, Bold = c.Bold });
+                                        allMerges.Add(new MergeInfo { R1 = rowOffset + ri, C1 = mc, R2 = rowOffset + ri, C2 = c.Col == 0 ? mid - 1 : maxNcols - 1 });
+                                    }
+                                }
                             }
                         }
                         sectionBounds.Add((secStart, rowOffset + sec.NRows - 1, 0));
