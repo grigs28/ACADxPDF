@@ -241,10 +241,10 @@ def convert():
     os.makedirs(upload_dir, exist_ok=True)
 
     for f in dwg_files:
-        safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.dwg"
-        path = os.path.join(upload_dir, safe_name)
+        item = task.add_file(f.filename, "", display_name=f.filename)
+        path = os.path.join(upload_dir, item.name)
         f.save(path)
-        task.add_file(safe_name, path, display_name=f.filename)
+        item.source_path = path
 
     store.start_task(task)
 
@@ -340,7 +340,8 @@ def update_config():
         return jsonify({"error": "请先登录"}), 401
     data = request.get_json(force=True)
     allowed = {"printer", "plot_style", "timeout", "border_keywords",
-               "merge_borders", "auto_paper_size", "split_borders", "max_workers"}
+               "merge_borders", "auto_paper_size", "split_borders", "max_workers",
+               "drawing_scales"}
     updated = {}
     for k, v in data.items():
         if k in allowed:
@@ -348,6 +349,8 @@ def update_config():
                 v = int(v)
             elif k == "max_workers":
                 v = max(1, int(v))
+            elif k == "drawing_scales":
+                v = [int(x) for x in v if isinstance(x, (int, float, str))]
             elif k in ("merge_borders", "auto_paper_size", "split_borders"):
                 v = bool(v)
             runtime_config[k] = v

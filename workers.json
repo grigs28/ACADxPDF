@@ -1,0 +1,21 @@
+{
+  "workers": [
+    {
+      "name": "local",
+      "url": "http://localhost:5557",
+      "max_slots": 4
+    },
+    {
+      "name": "nod-01",
+      "url": "http://192.168.93.201:5557",
+      "max_slots": 4
+    },
+    {
+      "name": "nod-02",
+      "url": "http://192.168.93.202:5557",
+      "max_slots": 4
+    }
+  ],
+  "acad_exe": "C:\\opt\\AutoCAD 2026\\acad.exe",
+  "timeout": 500
+}

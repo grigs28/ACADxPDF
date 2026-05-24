@@ -301,6 +301,7 @@ header{
             <div><label>打印机</label><input id="cPr" placeholder="DWG To PDF.pc3"></div>
             <div><label>打印样式</label><div style="display:flex;gap:6px"><select id="cPs" style="flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:4px 8px;font-family:var(--mono);font-size:12px"></select><button class="btn bs" id="bCtbUp" style="padding:4px 10px;font-size:11px;white-space:nowrap">上传CTB</button><input type="file" id="fCtb" accept=".ctb" style="display:none"></div></div>
             <div class="wide"><label>图框关键词</label><input id="cKw" placeholder="TK,TUKUANG,BORDER,FRAME,TITLE"></div>
+            <div class="wide"><label>比例列表</label><input id="cScales" placeholder="1,2,5,10,20,25,50,75,100,150,200,300,500,1000"><small style="color:var(--text3);font-size:11px;margin-top:2px">用于自动检测图框比例，逗号分隔</small></div>
             <div class="wide" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
               <div class="sw-row" title="检测每个图框，分别输出独立PDF"><label style="font-size:12px;color:var(--text2)">拆分图框</label><label class="sw"><input type="checkbox" id="cSplit" checked><span class="sl"></span></label><span class="sw-label" id="lSplit">开</span></div>
               <div class="sw-row" title="根据图框尺寸自动选择A3/A2/A1等标准纸张"><label style="font-size:12px;color:var(--text2)">自动匹配图框</label><label class="sw"><input type="checkbox" id="cAuto" checked><span class="sl"></span></label><span class="sw-label" id="lAuto">开</span></div>
@@ -828,6 +829,7 @@ function loadCfg(){
     $('cPr').value=c.printer||'';
     $('cTo').value=c.timeout||180;$('cKw').value=c.border_keywords||'';
     $('cWk').value=c.max_workers||4;
+    $('cScales').value=(c.drawing_scales||[]).join(',');
     $('cSplit').checked=c.split_borders!==false;$('cAuto').checked=c.auto_paper_size!==false;
     $('cMerge').checked=c.merge_borders===true;
     updSw();$('wk').textContent=$('cWk').value;
@@ -835,9 +837,11 @@ function loadCfg(){
   });
 }
 $('bCfg').onclick=function(){
+  var scales=$('cScales').value.split(',').map(function(s){return parseInt(s.trim())}).filter(function(n){return n>0});
   fetch(API+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     printer:$('cPr').value,plot_style:$('cPs').value,timeout:parseInt($('cTo').value)||180,
     border_keywords:$('cKw').value,max_workers:parseInt($('cWk').value)||4,
+    drawing_scales:scales.length?scales:undefined,
     split_borders:$('cSplit').checked,auto_paper_size:$('cAuto').checked,merge_borders:$('cMerge').checked
   })}).then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){$('wk').textContent=$('cWk').value;toast('配置已保存')}});
 };

@@ -1,0 +1,54 @@
+Windows Registry Editor Version 5.00
+
+; ============================================================
+; ACADxPDF — AutoCAD 2026 防弹窗注册表配置
+; 双击执行即可，所有 Profile 一次性设置
+; ============================================================
+
+; --- 系统变量（全局） ---
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Variables]
+"FONTALT"="hztxt.shx"
+"DWGCHECK"=dword:00000000
+"RECOVERYMODE"=dword:00000000
+"PROXYNOTICE"=dword:00000000
+"SIGWARN"=dword:00000000
+"STARTUP"=dword:00000000
+"NOMUTT"=dword:00000001
+"FILEDIA"=dword:00000000
+"CMDDIA"=dword:00000000
+"ATTDIA"=dword:00000000
+"EXPERT"=dword:00000005
+"BACKGROUNDPLOT"=dword:00000000
+"LOGFILEMODE"=dword:00000000
+
+; --- grigs Profile 隐藏对话框 ---
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\grigs\Dialogs\acad-507]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\grigs\Dialogs\acad-9029]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\grigs\Dialogs\acad-9072]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\grigs\Dialogs\acad-9002]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\grigs\Dialogs\acad-105]
+@=dword:00000001
+
+; --- 未命名配置 Profile 隐藏对话框 ---
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\<<未命名配置>>\Dialogs\acad-507]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\<<未命名配置>>\Dialogs\acad-9029]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\<<未命名配置>>\Dialogs\acad-9072]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\<<未命名配置>>\Dialogs\acad-9002]
+@=dword:00000001
+
+[HKEY_CURRENT_USER\SOFTWARE\Autodesk\AutoCAD\R25.1\ACAD-9101:804\Profiles\<<未命名配置>>\Dialogs\acad-105]
+@=dword:00000001

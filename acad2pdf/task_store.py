@@ -1,8 +1,10 @@
 # acad2pdf/task_store.py
 """统一任务模型 + 内存队列 + Worker 注册表。"""
 
+import hashlib
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -11,6 +13,16 @@ import zipfile
 from pathlib import Path
 
 log = logging.getLogger("acad2pdf")
+
+
+def safe_filename(name: str, idx: int = 0) -> str:
+    """生成安全磁盘文件名：保留扩展名，文件体用序号+hash，ASCII 安全。"""
+    name = os.path.basename(name).strip()
+    stem, ext = os.path.splitext(name)
+    if not ext:
+        ext = ".bin"
+    h = hashlib.md5(name.encode("utf-8")).hexdigest()[:6]
+    return f"{idx:03d}_{h}{ext}"
 
 
 class FileItem:
@@ -62,7 +74,8 @@ class Task:
 
     def add_file(self, name: str, source_path: str, display_name: str = "") -> FileItem:
         file_id = f"f{len(self.files)+1}_{uuid.uuid4().hex[:4]}"
-        item = FileItem(file_id, name, source_path, display_name=display_name)
+        safe_name = safe_filename(name, idx=len(self.files) + 1)
+        item = FileItem(file_id, safe_name, source_path, display_name=display_name or name)
         self.files.append(item)
         return item
 
@@ -192,6 +205,7 @@ class TaskStore:
                     result.append({
                         "file_id": f.id,
                         "file_name": f.name,
+                        "display_name": f.display_name or f.name,
                         "task_id": task.id,
                         "task_type": task.type,
                         "params": task.params,

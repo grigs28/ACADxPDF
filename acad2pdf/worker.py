@@ -15,6 +15,7 @@ import time
 import uuid
 
 from werkzeug.utils import secure_filename
+from .task_store import safe_filename  # noqa: F401
 
 log = logging.getLogger("acad2pdf")
 
@@ -114,7 +115,7 @@ class Worker:
             fname = "source_file"
             if "filename=" in cd:
                 fname = cd.split("filename=")[-1].strip('" ')
-            path = os.path.join(dest_dir, secure_filename(fname) or fname)
+            path = os.path.join(dest_dir, safe_filename(fname))
             with open(path, "wb") as f:
                 for chunk in resp.iter_content(8192):
                     f.write(chunk)

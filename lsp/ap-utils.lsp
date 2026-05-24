@@ -36,7 +36,8 @@
 ;;; 系统变量管理
 ;;; ------------------------------------------------------------
 (defun ap:save-sysvars (/ vars vals)
-  (setq vars '("FILEDIA" "CMDECHO" "PICKADD" "CLAYER"))
+  (setq vars '("FILEDIA" "CMDECHO" "PICKADD" "CLAYER"
+               "WRITELPLOTLOG" "WRITECONTINUOUSPLOTLOG"))
   (setq vals (mapcar 'getvar vars))
   (setq *saved-sysvars* (list vars vals))
   *saved-sysvars*)
@@ -53,6 +54,8 @@
   (setvar "FILEDIA" 0)
   (setvar "CMDECHO" 0)
   (setvar "PICKADD" 1)
+  (vl-catch-all-apply 'setvar (list "WRITELPLOTLOG" 0))
+  (vl-catch-all-apply 'setvar (list "WRITECONTINUOUSPLOTLOG" 0))
   (setq result (vl-catch-all-apply func))
   (ap:restore-sysvars *saved-sysvars*)
   (if (vl-catch-all-error-p result)
@@ -253,6 +256,12 @@
         (princ (strcat "\n[AutoPlot] DXF 导出失败: "
                        (vl-catch-all-error-message result)))
         (princ " OK")))))
+
+(defun ap:write-file-lines (path lines / f)
+  (setq f (open path "w"))
+  (if f
+    (progn (foreach line lines (write-line line f)) (close f) T)
+    nil))
 
 (princ "\n[AutoPlot] ap-utils.lsp 已加载。")
 (princ)

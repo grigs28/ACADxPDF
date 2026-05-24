@@ -8,7 +8,6 @@ import re
 import zipfile
 
 from flask import Blueprint, request, jsonify, send_file, session
-from werkzeug.utils import secure_filename
 
 from .task_store import store
 
@@ -101,7 +100,7 @@ def pull():
         _sse_broadcast("file_start", {
             "task_id": f.get("task_id"),
             "file_id": f["file_id"],
-            "file": f.get("file_name", ""),
+            "file": f.get("display_name", f.get("file_name", "")),
             "worker": worker_id,
         })
     log.info("Worker %s pulled %d files", worker_id, len(files))
@@ -156,7 +155,7 @@ def report_result():
     _sse_broadcast("file_done", {
         "task_id": task.id,
         "file_id": file_id,
-        "file": f.name,
+        "file": f.display_name or f.name,
         "success": success,
         "elapsed": elapsed,
         "done_count": task.done_count,
@@ -199,7 +198,9 @@ def _finalize_task(task):
                 continue
             for name in sorted(os.listdir(fdir)):
                 if name.lower().endswith((".pdf", ".dwg", ".dxf")):
-                    zf.write(os.path.join(fdir, name), f"{display_stem}/{name}")
+                    # 将安全文件名替换为中文显示名
+                    arc_name = name.replace(stem, display_stem, 1)
+                    zf.write(os.path.join(fdir, name), f"{display_stem}/{arc_name}")
 
     task.zip_path = zip_path
     if os.path.exists(zip_path):

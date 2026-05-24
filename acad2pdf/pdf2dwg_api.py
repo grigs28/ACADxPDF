@@ -108,10 +108,10 @@ def convert_pdf_batch():
     }, results_dir=results_dir)
 
     for f in pdf_files:
-        safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.pdf"
-        p = os.path.join(upload_dir, safe_name)
+        item = task.add_file(f.filename, "", display_name=f.filename)
+        p = os.path.join(upload_dir, item.name)
         f.save(p)
-        task.add_file(safe_name, p, display_name=f.filename)
+        item.source_path = p
 
     store.start_task(task)
 
@@ -138,10 +138,10 @@ def convert_pdf_add(task_id):
     upload_dir = os.path.join(task.results_dir, "upload")
     added = []
     for f in pdf_files:
-        safe_name = secure_filename(f.filename) or f"{uuid.uuid4().hex[:8]}.pdf"
-        p = os.path.join(upload_dir, safe_name)
+        item = task.add_file(f.filename, "", display_name=f.filename)
+        p = os.path.join(upload_dir, item.name)
         f.save(p)
-        task.add_file(safe_name, p, display_name=f.filename)
+        item.source_path = p
         added.append(f.filename)
 
     _sse_broadcast("pdf_task_add", {"task_id": task_id, "added": len(added), "total": task.total})

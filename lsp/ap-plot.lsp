@@ -1,158 +1,203 @@
 ;;; ============================================================
 ;;; ap-plot.lsp — AutoPlot 打印输出引擎
-;;; Window 模式精确裁剪、页面设置、多图框循环输出
+;;; 双引擎：vla 方式 + -PLOT 命令方式
 ;;; ============================================================
 
 ;;; ------------------------------------------------------------
-;;; 打印设备初始化
+;;; 方式 A：vla SetWindowToPlot + PlotToFile
 ;;; ------------------------------------------------------------
-(defun ap:init-plot-device (doc / plot cfg-name)
+(defun ap:plot-frame-vla (doc frame pdf-path / layout plot bounds ll ur
+                          printer plot-style paper-name orient rot
+                          canonical pdf-fwd
+                          sa-ll sa-ur r1 r2 r3 r4 r5 r6 r7)
+  (setq layout (vla-get-ActiveLayout doc))
   (setq plot (vla-get-Plot doc))
-  (setq cfg-name (ap:get-config-default "plot-device" "DWG To PDF.pc3"))
-  (if (findfile cfg-name)
-    (progn
-      (princ (strcat "\n[AutoPlot] 使用打印设备: " cfg-name))
-      plot)
-    (progn
-      (princ (strcat "\n[AutoPlot] 警告: 未找到 " cfg-name "，回退至 DWG To PDF.pc3"))
-      plot)))
-
-;;; ------------------------------------------------------------
-;;; 设置打印窗口
-;;; ------------------------------------------------------------
-(defun ap:set-plot-window (layout bounds / ll ur margin)
-  (setq margin (ap:get-config-default "plot-margin" 0.0))
-  (setq ll (list (- (car (car bounds)) margin)
-                 (- (cadr (car bounds)) margin))
-        ur (list (+ (car (cadr bounds)) margin)
-                 (+ (cadr (cadr bounds)) margin)))
-  (vla-SetWindowToPlot layout
-    (vlax-make-variant (vlax-safearray-fill
-      (vlax-make-safearray vlax-vbDouble '(0 . 1)) ll))
-    (vlax-make-variant (vlax-safearray-fill
-      (vlax-make-safearray vlax-vbDouble '(0 . 1)) ur)))
-  (vla-put-PlotType layout acWindow))
-
-;;; ------------------------------------------------------------
-;;; 页面设置应用
-;;; ------------------------------------------------------------
-(defun ap:apply-page-setup (layout frame / paper-name canonical orient
-                             rot style scale-mode cfg-name)
-  (setq cfg-name (ap:get-config-default "plot-device" "DWG To PDF.pc3"))
-  (vl-catch-all-apply
-    '(lambda () (vla-put-ConfigName layout cfg-name)))
-
+  (setq bounds (ap:frame-get frame "bounds"))
+  (setq ll (car bounds) ur (cadr bounds))
+  (setq printer (ap:get-config-default "plot-device" "DWG To PDF.pc3"))
+  (setq plot-style (ap:get-config-default "plot-style" "monochrome.ctb"))
   (setq paper-name (ap:frame-get frame "paper-match"))
-  (setq canonical (ap:canonical-media-name paper-name))
   (setq orient (ap:frame-get frame "orientation"))
-
-  (vl-catch-all-apply
-    '(lambda () (vla-SetCanonicalMediaName layout canonical)))
-
+  (setq canonical (ap:canonical-media-name paper-name))
   (setq rot (if (= orient "portrait") ac0degrees ac90degrees))
-  (vl-catch-all-apply
-    '(lambda () (vla-put-PlotRotation layout rot)))
+  (setq pdf-fwd (vl-string-translate "\\" "/" pdf-path))
+  (if (findfile pdf-fwd) (vl-file-delete pdf-fwd))
 
-  (setq style (ap:get-config-default "plot-style" "acad.ctb"))
-  (vl-catch-all-apply
-    '(lambda () (vla-put-StyleSheet layout style)))
+  ;; 设打印设备
+  (setq r1 (vl-catch-all-apply '(lambda () (vla-put-ConfigName layout printer))))
+  (_log (strcat "    vla_config=" (if (vl-catch-all-error-p r1) (strcat "ERR:" (vl-catch-all-error-message r1)) "OK")))
+  (vla-RefreshPlotDeviceInfo layout)
 
-  (setq scale-mode (ap:get-config-default "plot-scale" "Fit"))
-  (if (= scale-mode "Fit")
-    (vl-catch-all-apply
-      '(lambda () (vla-put-StandardScale layout acScaleToFit)))
-    (vl-catch-all-apply
-      '(lambda ()
-         (vla-put-StandardScale layout acCustomScale)
-         (vla-SetCustomScale layout 1.0 100.0)))))
+  ;; 设纸张（CanonicalMediaName 是属性，用 put 不用 Set）
+  (setq r2 (vl-catch-all-apply '(lambda () (vla-put-CanonicalMediaName layout canonical))))
+  (_log (strcat "    vla_paper=" (if (vl-catch-all-error-p r2) (strcat "ERR:" (vl-catch-all-error-message r2)) "OK")))
+
+  ;; 设旋转、样式、缩放
+  (vl-catch-all-apply '(lambda () (vla-put-PlotRotation layout rot)))
+  (vl-catch-all-apply '(lambda () (vla-put-StyleSheet layout plot-style)))
+  (vl-catch-all-apply '(lambda () (vla-put-StandardScale layout acScaleToFit)))
+  (vl-catch-all-apply '(lambda () (vla-put-CenterPlot layout :vlax-true)))
+
+  ;; SetWindowToPlot — 纯 x,y
+  (setq sa-ll (vlax-make-safearray vlax-vbDouble '(0 . 1)))
+  (vlax-safearray-fill sa-ll (list (car ll) (cadr ll)))
+  (setq sa-ur (vlax-make-safearray vlax-vbDouble '(0 . 1)))
+  (vlax-safearray-fill sa-ur (list (car ur) (cadr ur)))
+  (_log (strcat "    vla_xy LL=" (rtos (car ll) 2 1) "," (rtos (cadr ll) 2 1)
+                 " UR=" (rtos (car ur) 2 1) "," (rtos (cadr ur) 2 1)))
+
+  (setq r5 (vl-catch-all-apply '(lambda () (vla-SetWindowToPlot layout sa-ll sa-ur))))
+  (_log (strcat "    vla_setWin=" (if (vl-catch-all-error-p r5) (strcat "ERR:" (vl-catch-all-error-message r5)) "OK")))
+
+  ;; put-PlotType = acWindow（必须在 SetWindowToPlot 之后）
+  (setq r6 (vl-catch-all-apply '(lambda () (vla-put-PlotType layout acWindow))))
+  (_log (strcat "    vla_plotType=" (if (vl-catch-all-error-p r6) (strcat "ERR:" (vl-catch-all-error-message r6)) "OK")))
+
+  ;; PlotToFile
+  (setq r7 (vl-catch-all-apply '(lambda () (vla-PlotToFile plot pdf-fwd))))
+  (_log (strcat "    vla_plotToFile=" (if (vl-catch-all-error-p r7) (strcat "ERR:" (vl-catch-all-error-message r7)) "OK")))
+
+  ;; 等文件
+  (setq _wt 0)
+  (while (and (null (findfile pdf-fwd)) (< _wt 60))
+    (command "_.DELAY" 500)
+    (setq _wt (1+ _wt)))
+  (if (findfile pdf-fwd)
+    (progn (_log (strcat "    vla_result: " (itoa (vl-file-size pdf-fwd)) "B")) T)
+    (progn (_log "    vla_result: NO_FILE") nil)))
+
 
 ;;; ------------------------------------------------------------
-;;; 单图框打印（vla ActiveX 方式，无参数错位风险）
+;;; 方式 B：-PLOT 命令（一次性参数，脚本模式唯一可行方式）
 ;;; ------------------------------------------------------------
-(defun ap:plot-frame (doc frame pdf-path / bounds layout plot pdf-fwd result)
+(defun ap:plot-frame-cmd (doc frame pdf-path / bounds ll ur paper-name orient
+                          printer plot-style pdf-fwd result)
   (setvar "CTAB" "Model")
   (setvar "BACKGROUNDPLOT" 0)
   (setvar "PUBLISHCOLLATE" 0)
+  (setvar "FILEDIA" 0)
+  (setvar "CMDDIA" 0)
+  (setvar "EXPERT" 5)
+  (setvar "NOMUTT" 1)
 
   (setq bounds (ap:frame-get frame "bounds"))
-  (setq layout (vla-get-ActiveLayout doc))
-  (setq plot (vla-get-Plot doc))
+  (setq ll (car bounds) ur (cadr bounds))
+  (setq paper-name (ap:frame-get frame "paper-match"))
+  (setq orient (ap:frame-get frame "orientation"))
+  (setq printer (ap:get-config-default "plot-device" "DWG To PDF.pc3"))
+  (setq plot-style (ap:get-config-default "plot-style" "monochrome.ctb"))
+  (setq paper-name (ap:plot-paper-name paper-name))
   (setq pdf-fwd (vl-string-translate "\\" "/" pdf-path))
 
-  ;; 页面设置：打印机、纸张、方向、样式、比例
-  (ap:apply-page-setup layout frame)
-  ;; 打印窗口裁剪
-  (ap:set-plot-window layout bounds)
-  ;; 居中打印
-  (vl-catch-all-apply '(lambda () (vla-put-CenterPlot layout :vlax-true)))
-
-  ;; vla 方式输出 PDF
-  (setq result (vl-catch-all-apply
-    '(lambda () (vla-PlotToFile plot pdf-fwd))))
+  (setq result
+    (vl-catch-all-apply
+      '(lambda ()
+         (command "_.-PLOT" "Y" ""
+           printer
+           paper-name
+           "M"
+           (if (= orient "portrait") "P" "L")
+           "N"
+           "W"
+           (strcat (rtos (car ll) 2 2) "," (rtos (cadr ll) 2 2))
+           (strcat (rtos (car ur) 2 2) "," (rtos (cadr ur) 2 2))
+           "F" "C" "Y" plot-style "N" ""
+           pdf-fwd
+           "N" "Y"))))
 
   (if (vl-catch-all-error-p result)
-    (progn
-      (princ (strcat "\n    打印失败: " (vl-catch-all-error-message result)))
-      nil)
-    (progn
-      (princ (strcat " -> " (vl-filename-base pdf-path) ".pdf"))
-      T)))
+    (progn (_log (strcat "    cmd_ERR: " (vl-catch-all-error-message result))) nil)
+    T))
+
 
 ;;; ------------------------------------------------------------
-;;; 多图框循环处理
+;;; 写 manifest 文件
 ;;; ------------------------------------------------------------
-(defun ap:process-frames (doc frames output-dir / pdf-count total frame
-                          paper-name template pdf-path result
-                          doc-name bare-name ok)
-  (setq pdf-count 0
-        total (length frames)
-        result nil)
+(defun ap:write-manifest (path frames / lines n f)
+  (setq lines nil)
+  (setq n 0)
+  (foreach f frames
+    (setq n (1+ n))
+    (setq lines (cons
+      (strcat (itoa n) "|"
+              (ap:frame-get f "paper-match") "|"
+              (ap:frame-get f "orientation") "|"
+              (if (ap:frame-get f "block-name") (ap:frame-get f "block-name") "RECT"))
+      lines)))
+  (ap:write-file-lines path (reverse lines)))
+
+;;; ------------------------------------------------------------
+;;; 多图框循环处理 — 默认用 vla，失败回退 -PLOT
+;;; ------------------------------------------------------------
+(defun ap:process-frames (doc frames output-dir / total idx frame
+                          paper-name template pdf-path ok results
+                          doc-name bare-name mode)
+  (_log "  plot_start")
+  (setvar "CTAB" "Model")
+  (setvar "BACKGROUNDPLOT" 0)
+  (setvar "PUBLISHCOLLATE" 0)
+  (setvar "FILEDIA" 0)
+  (setvar "CMDDIA" 0)
+  (setvar "EXPERT" 5)
+  (setvar "NOMUTT" 1)
+
+  ;; 从配置读模式：vla 或 cmd
+  (setq mode (ap:get-config-default "plot-mode" "cmd"))
+
+  (setq total (length frames)
+        results nil
+        idx 0)
   (setq doc-name (vla-get-Name doc))
   (setq bare-name (vl-filename-base doc-name))
   (setq template (ap:get-config-default "pdf-name-format" "{filename}_{seq:03d}"))
 
-  (foreach frame frames
-    (setq pdf-count (1+ pdf-count))
+  (_log (strcat "  mode=" mode " frames=" (itoa total)))
 
+  (foreach frame frames
+    (setq idx (1+ idx))
     (setq frame (ap:match-paper-for-frame frame))
     (setq paper-name (ap:frame-get frame "paper-match"))
-
-    (setq pdf-path (strcat output-dir "\\"
-                   (ap:format-filename template bare-name pdf-count
+    (setq pdf-path (strcat output-dir "/"
+                   (ap:format-filename template bare-name idx
                      paper-name
                      (ap:frame-get frame "layout")
-                     (ap:frame-get frame "block-name"))
+                     (if (ap:frame-get frame "block-name") (ap:frame-get frame "block-name") "RECT"))
                    ".pdf"))
 
-    (setq ok (ap:plot-frame doc frame pdf-path))
-    (if (null ok)
-      (setq ok (ap:plot-frame doc frame pdf-path)))
+    (_log (strcat "  frame " (itoa idx)))
+    (if (findfile pdf-path) (vl-file-delete pdf-path))
+
+    ;; 按模式选择打印函数
+    (if (= mode "vla")
+      (setq ok (ap:plot-frame-vla doc frame pdf-path))
+      (setq ok (ap:plot-frame-cmd doc frame pdf-path)))
+
+    ;; vla 失败则回退 -PLOT
+    (if (and (null ok) (= mode "vla"))
+      (progn
+        (_log "    fallback to cmd")
+        (setq ok (ap:plot-frame-cmd doc frame pdf-path))))
 
     (if ok
-      (setq result (cons pdf-path result))
-      (princ (strcat "\n    图框 " (itoa pdf-count) " 打印失败: " pdf-path))))
+      (setq results (cons pdf-path results))))
 
-  (reverse result))
+  (ap:write-manifest (strcat output-dir "/_manifest.txt") frames)
+  (reverse results))
 
 ;;; ------------------------------------------------------------
 ;;; 处理当前活动文档
 ;;; ------------------------------------------------------------
 (defun ap:process-current-drawing (/ doc frames output-dir pf-result)
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
-
   (ap:export-dxf)
-
   (setq frames (ap:detect-all-frames))
-
   (if (null frames)
-    (progn
-      (princ "\n[AutoPlot] 当前文档未检测到图框。")
-      nil)
+    (progn (_log "No frames detected.") nil)
     (progn
       (setq output-dir (ap:get-config-default "output-directory" "./PDF_Output"))
       (vl-mkdir output-dir)
       (setq pf-result (ap:process-frames doc frames output-dir))
       pf-result)))
 
-(princ "\n[AutoPlot] ap-plot.lsp 已加载。")
+(princ "\n[AutoPlot] ap-plot.lsp loaded.")
 (princ)

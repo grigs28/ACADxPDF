@@ -1060,15 +1060,70 @@ LSP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PLOT_STYLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plot_styles")
 
 
+def _read_manifest(path: str) -> list[dict]:
+    """读取 LSP 生成的管道分隔 manifest 文件。格式: PAGE|PAPER|ORIENT|BLOCK"""
+    entries = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            entries.append({
+                "page": int(parts[0]) if parts else 0,
+                "paper": parts[1] if len(parts) > 1 else "custom",
+                "orientation": parts[2] if len(parts) > 2 else "landscape",
+                "block-name": parts[3] if len(parts) > 3 else "",
+            })
+    return sorted(entries, key=lambda e: e["page"])
+
+
+def _split_pdf(merged_path: str, output_dir: str, manifest: list[dict],
+               stem: str) -> list[str]:
+    """将多页 PDF 拆分为单页文件，保留合并 PDF。"""
+    try:
+        import pikepdf
+    except ImportError:
+        log.error("pikepdf 未安装，无法拆分 PDF。pip install pikepdf")
+        return [merged_path]
+
+    template = "{filename}_{seq:03d}_{paper}"
+    result_paths = []
+
+    with pikepdf.open(merged_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            if i < len(manifest):
+                info = manifest[i]
+                seq = i + 1
+                name = template
+                name = name.replace("{filename}", stem)
+                name = name.replace("{seq:03d}", f"{seq:03d}")
+                name = name.replace("{paper}", info.get("paper", "custom"))
+                name += ".pdf"
+            else:
+                name = f"{stem}_{i+1:03d}_unknown.pdf"
+
+            out_path = os.path.join(output_dir, name)
+            with pikepdf.new() as new_pdf:
+                new_pdf.pages.append(page)
+                new_pdf.save(out_path)
+            result_paths.append(out_path)
+
+    log.info("split %d pages from %s", len(result_paths), os.path.basename(merged_path))
+    return result_paths
+
+
 
 def _generate_lsp_env(output_dir_win: str, printer: str, plot_style: str,
                        border_keywords: str, plot_scale: str = "Fit",
-                       drawing_scale: float = 1.0) -> str:
+                       drawing_scale: float = 1.0,
+                       drawing_scales: list = None) -> str:
     """生成 autopilot.env 配置内容。"""
     keywords = [k.strip() for k in border_keywords.split(",") if k.strip()]
     block_names = " ".join(f'"{k}"' for k in keywords) if keywords else '"TK" "TUKUANG" "BORDER"'
     # 路径用正斜杠（AutoLISP 中反斜杠是转义符）
     out_dir = output_dir_win.replace("\\", "/")
+    scales_str = " ".join(str(s) for s in (drawing_scales or [1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 500, 1000]))
     return (
         '(\n'
         f'  ("block-names" . ({block_names}))\n'
@@ -1080,6 +1135,7 @@ def _generate_lsp_env(output_dir_win: str, printer: str, plot_style: str,
         f'  ("plot-device" . "{printer}")\n'
         f'  ("plot-scale" . "{plot_scale}")\n'
         f'  ("drawing-scale" . {drawing_scale})\n'
+        f'  ("drawing-scales" . ({scales_str}))\n'
         '  ("plot-margin" . 0.0)\n'
         '  ("export-dxf" . T)\n'
         ')\n'
@@ -1094,6 +1150,7 @@ def convert_dwg_lsp(
     border_keywords: str = None,
     plot_scale: str = "Fit",
     drawing_scale: float = 1.0,
+    drawing_scales: list = None,
     timeout: int = 600,
     progress_callback=None,
 ) -> ConversionResult:
@@ -1132,7 +1189,7 @@ def convert_dwg_lsp(
         if os.path.isfile(ctb_src):
             shutil.copy2(ctb_src, os.path.join(work_dir, plot_style))
 
-        env_content = _generate_lsp_env(output_win, printer, plot_style, border_keywords, plot_scale, drawing_scale)
+        env_content = _generate_lsp_env(output_win, printer, plot_style, border_keywords, plot_scale, drawing_scale, drawing_scales)
         env_path = os.path.join(work_dir, "autoplot.env")
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
@@ -1152,7 +1209,7 @@ def convert_dwg_lsp(
             '(setvar "EXPERT" 5)\n'
             '(setvar "SECURELOAD" 0)\n'
             '(setvar "BACKGROUNDPLOT" 0)\n'
-            '(setvar "PUBLISHCOLLATE" 0)\n'
+            '(setvar "PUBLISHCOLLATE" 1)\n'
             '(setvar "LOGFILEMODE" 0)\n'
             '(setvar "FONTALT" "hztxt.shx")\n'
             '(setvar "PROXYNOTICE" 0)\n'
@@ -1219,7 +1276,8 @@ def convert_dwg_lsp(
         cmd.append(_to_native_path(scr_path))
         print(f"[LSP CMD] {' '.join(cmd)}", file=sys.stderr)
         stderr_log = open(os.path.join(work_dir, "acad_stderr.log"), "w", encoding="utf-8")
-        proc = subprocess.Popen(cmd, stderr=stderr_log)
+        stdout_log = open(os.path.join(work_dir, "acad_stdout.log"), "w", encoding="utf-8")
+        proc = subprocess.Popen(cmd, stdout=stdout_log, stderr=stderr_log)
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -1253,30 +1311,33 @@ def convert_dwg_lsp(
         # 收集输出 PDF
         _emit(progress_callback, "progress", {"step": "collect_pdfs", "file": os.path.basename(dwg_path)})
 
-        pdf_files = sorted(
-            [os.path.join(output_dir, f) for f in os.listdir(output_dir)
-             if f.lower().endswith(".pdf")],
-            key=lambda p: os.path.basename(p)
-        )
+        merged_path = os.path.join(output_dir, "_merged.pdf")
+        manifest_path = os.path.join(output_dir, "_manifest.txt")
+
+        pdf_files = []
+        if os.path.isfile(merged_path) and os.path.isfile(manifest_path):
+            # PUBLISH 模式：拆分多页 PDF + 保留合并 PDF
+            manifest = _read_manifest(manifest_path)
+            pdf_files = _split_pdf(merged_path, output_dir, manifest, Path(dwg_path).stem)
+        else:
+            # 回退：直接收集单页 PDF（兼容旧模式）
+            pdf_files = sorted(
+                [os.path.join(output_dir, f) for f in os.listdir(output_dir)
+                 if f.lower().endswith(".pdf") and f != "_merged.pdf"],
+                key=lambda p: os.path.basename(p)
+            )
 
         if pdf_files:
             result.success = True
             result.pdf_path = pdf_files[0] if len(pdf_files) == 1 else json.dumps(pdf_files)
 
-            # 从文件名解析 border 信息（格式: {stem}_{seq}_{paper}.pdf）
-            stem = Path(dwg_path).stem
             borders = []
             for pf in pdf_files:
-                bn = os.path.basename(pf)
-                name_parts = bn.replace(".pdf", "").split("_")
-                paper_label = name_parts[-1] if len(name_parts) >= 3 and name_parts[-1] != stem else "custom"
                 borders.append(Border(
                     name=f"frame_{len(borders)+1}",
                     x=0, y=0, width=0, height=0,
                     insert_x=0, insert_y=0,
                 ))
-                # 设置 size_label 通过修改属性不太方便，直接附加
-            # 简化：返回文件数量即可，详细 border 信息由 LSP 日志提供
             result.borders = borders
 
             _emit(progress_callback, "done", {
@@ -1292,8 +1353,9 @@ def convert_dwg_lsp(
         _emit(progress_callback, "error", {"file": os.path.basename(dwg_path), "error": str(ex)})
     finally:
         result.elapsed = time.time() - start
-        if os.path.isdir(work_dir):
-            shutil.rmtree(work_dir, ignore_errors=True)
+        # 暂时保留 work_dir 用于调试空 PDF 问题
+        # if os.path.isdir(work_dir):
+        #     shutil.rmtree(work_dir, ignore_errors=True)
 
     return result
 
