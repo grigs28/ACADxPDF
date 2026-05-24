@@ -40,7 +40,7 @@ public static class Layout
     public const double H_TITLE = 600; // 页标题
 
     // 内容起始 Y 偏移
-    public const double CONTENT_START_OFFSET = 2000; // 从 CONTENT_TOP 往下 2000 开始
+    public const double CONTENT_START_OFFSET = -2000; // 从 CONTENT_TOP 往上 2000 开始（整体上移 4000）
     public const double TITLE_Y_OFFSET = 1000;       // 标题距 DRAW_TOP 1000
 
     // 中文数字
