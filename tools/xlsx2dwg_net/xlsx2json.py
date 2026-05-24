@@ -266,12 +266,12 @@ def analyze_sheet(ws, max_rows=None):
                     if lv:
                         cells.append({
                             'row': len(row_heights), 'col': 0,
-                            'text': lv, 'text_height': 0, 'alignment': 5,
+                            'text': lv, 'text_height': 0, 'alignment': 1,
                         })
                     if rv:
                         cells.append({
                             'row': len(row_heights), 'col': 1,
-                            'text': rv, 'text_height': 0, 'alignment': 5,
+                            'text': rv, 'text_height': 0, 'alignment': 1,
                         })
                     row_heights.append(0)
                 elif not has_right:
