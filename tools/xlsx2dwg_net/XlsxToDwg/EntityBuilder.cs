@@ -371,8 +371,8 @@ public static class EntityBuilder
                 {
                     if (isTextRow)
                     {
+                        // 文本行：隐藏左、右、底边框，保留顶边框（让上方表格底边可见）
                         var borders = table.Cells[localRow, c].Borders;
-                        borders.Top.IsVisible = false;
                         borders.Bottom.IsVisible = false;
                         borders.Left.IsVisible = false;
                         borders.Right.IsVisible = false;
@@ -386,6 +386,19 @@ public static class EntityBuilder
                             borders.Bottom.IsVisible = brd.Contains('B');
                             borders.Left.IsVisible = brd.Contains('L');
                             borders.Right.IsVisible = brd.Contains('R');
+                        }
+                        else
+                        {
+                            // 无边框数据的空单元格 → 隐藏全部边框
+                            var tc = table.Cells[localRow, c];
+                            if (string.IsNullOrEmpty(tc.TextString))
+                            {
+                                var borders = tc.Borders;
+                                borders.Top.IsVisible = false;
+                                borders.Bottom.IsVisible = false;
+                                borders.Left.IsVisible = false;
+                                borders.Right.IsVisible = false;
+                            }
                         }
                     }
                 }
