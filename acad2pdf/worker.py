@@ -275,11 +275,12 @@ class Worker:
             return int(server_config["timeout"])
         return self.timeout
 
-    def run_loop(self):
+    def run_loop(self, grab_delay=2):
         """Worker 主循环（单线程拉取模式）。"""
         self._running = True
         idle_wait = 2
-        log.info("Worker %s loop started (capacity=%d)", self.worker_id, self.capacity)
+        log.info("Worker %s loop started (capacity=%d, grab_delay=%ds)",
+                 self.worker_id, self.capacity, grab_delay)
         while self._running:
             files, srv_config = self.pull()
             if not files:
@@ -292,18 +293,21 @@ class Worker:
                 if not self._running:
                     break
                 self.run_one(f, timeout)
+            # 抢到任务后等 grab_delay 秒再抢，给其他 worker 机会
+            if grab_delay > 0:
+                time.sleep(grab_delay)
         log.info("Worker %s loop stopped", self.worker_id)
 
     def stop(self):
         self._running = False
 
 
-def start_worker_threads(worker: Worker, num_threads: int):
+def start_worker_threads(worker: Worker, num_threads: int, grab_delay: int = 2):
     """启动 Worker 的多线程循环。每个线程独立 pull→convert→result。"""
     threads = []
     for i in range(num_threads):
-        t = threading.Thread(target=worker.run_loop, daemon=True,
-                             name=f"worker_{worker.worker_id}_{i}")
+        t = threading.Thread(target=worker.run_loop, args=(grab_delay,),
+                             daemon=True, name=f"worker_{worker.worker_id}_{i}")
         t.start()
         threads.append(t)
     return threads
@@ -350,7 +354,8 @@ if __name__ == "__main__":
     )
 
     worker.register()
-    threads = start_worker_threads(worker, worker.capacity)
+    threads = start_worker_threads(worker, worker.capacity,
+                                   grab_delay=cfg.get("grab_delay", 2))
 
     # 心跳线程
     def heartbeat_loop():
@@ -360,8 +365,8 @@ if __name__ == "__main__":
 
     threading.Thread(target=heartbeat_loop, daemon=True).start()
 
-    log.info("Remote worker %s started (capacity=%d, master=%s)",
-             worker.worker_id, worker.capacity, worker.master_url)
+    log.info("Remote worker %s started (capacity=%d, grab_delay=%ds, master=%s)",
+             worker.worker_id, worker.capacity, cfg.get("grab_delay", 2), worker.master_url)
 
     def _shutdown(signum, frame):
         log.info("Shutting down worker %s...", worker.worker_id)

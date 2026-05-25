@@ -259,7 +259,7 @@ def convert():
 
 @app.route("/convert-xlsx", methods=["POST"])
 def convert_xlsx():
-    """上传 xlsx 文件，批量转 DWG（全专业）。"""
+    """上传 xlsx 文件，批量转 DWG（按专业拆分并行）。"""
     err = _check_api_key()
     if err:
         return err
@@ -279,13 +279,28 @@ def convert_xlsx():
     except ValueError:
         sheet_list = None
 
+    # 解析每个 xlsx 的专业列表
+    import openpyxl
+    per_file_sheets = []
+    for f in xlsx_files:
+        f.seek(0)
+        wb = openpyxl.load_workbook(f, read_only=True)
+        all_names = wb.sheetnames
+        wb.close()
+        if sheet_list:
+            names = [all_names[i - 1] for i in sheet_list if 0 < i <= len(all_names)]
+            indices = [i for i in sheet_list if 0 < i <= len(all_names)]
+        else:
+            names = list(all_names)
+            indices = list(range(1, len(all_names) + 1))
+        per_file_sheets.append((f, names, indices))
+
     project_dir = os.path.dirname(os.path.dirname(__file__))
     task_id = uuid.uuid4().hex[:12]
     results_dir = os.path.join(
         WORK_DIR or os.path.join(project_dir, "output"), task_id)
 
     task = store.create_task("xlsx2dwg", {
-        "sheets": sheet_list,
         "dll_path": runtime_config.get("xlsx2dwg_dll", ""),
         "template": runtime_config.get("xlsx2dwg_template", ""),
     }, results_dir=results_dir)
@@ -293,17 +308,32 @@ def convert_xlsx():
     upload_dir = os.path.join(results_dir, "upload")
     os.makedirs(upload_dir, exist_ok=True)
 
-    for f in xlsx_files:
-        item = task.add_file(f.filename, "", display_name=f.filename)
-        path = os.path.join(upload_dir, item.name)
-        f.save(path)
-        item.source_path = path
+    # 按专业拆分：每个 (xlsx, sheet) = 一个 FileItem
+    for f, names, indices in per_file_sheets:
+        # 保存上传文件一次
+        item0 = task.add_file(f.filename, "", display_name=f.filename)
+        path0 = os.path.join(upload_dir, item0.name)
+        f.seek(0)
+        f.save(path0)
+        item0.source_path = path0
+
+        if len(names) <= 1:
+            # 单专业或未指定：直接用一个 FileItem
+            item0.params = {"sheets": indices}
+        else:
+            # 多专业：第一个复用 item0，后续创建新 FileItem 共享源文件
+            item0.params = {"sheets": [indices[0]]}
+            for i in range(1, len(names)):
+                item = task.add_file(f.filename, "", display_name=f.filename)
+                item.source_path = path0  # 共享源文件
+                item.params = {"sheets": [indices[i]]}
 
     store.start_task(task)
 
     _sse_broadcast("task_start", {"task_id": task.id, "total": task.total,
                                     "workers": runtime_config["max_workers"]})
-    log.info("Task %s: %d XLSX files queued (xlsx2dwg)", task.id, task.total)
+    log.info("Task %s: %d FileItems queued (xlsx2dwg, per-profession parallel)",
+             task.id, task.total)
 
     return jsonify({"task_id": task.id, "status": "running", "total": task.total})
 

@@ -43,6 +43,7 @@ class FileItem:
         self.result = None
         self.error = None
         self.attempts = 0
+        self.params = None  # FileItem 级别参数（覆盖 task.params）
 
     def to_dict(self):
         return {
@@ -202,13 +203,16 @@ class TaskStore:
                     f.status = FileItem.STATUS_ASSIGNED
                     f.assigned_to = worker_id
                     f.attempts += 1
+                    file_params = dict(task.params) if task.params else {}
+                    if f.params:
+                        file_params.update(f.params)
                     result.append({
                         "file_id": f.id,
                         "file_name": f.name,
                         "display_name": f.display_name or f.name,
                         "task_id": task.id,
                         "task_type": task.type,
-                        "params": task.params,
+                        "params": file_params,
                     })
                 if len(result) >= capacity:
                     break

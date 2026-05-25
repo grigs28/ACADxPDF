@@ -66,7 +66,8 @@ def start_local_worker():
         acad_exe=os.environ.get("ACAD_EXE", r"C:\opt\AutoCAD 2026\acad.exe"),
         timeout=runtime_config.get("timeout", 300),
     )
-    threads = start_worker_threads(worker, worker.capacity)
+    threads = start_worker_threads(worker, worker.capacity,
+                                   grab_delay=runtime_config.get("grab_delay", 2))
 
     # 心跳线程：直接更新 store
     def heartbeat_loop():
