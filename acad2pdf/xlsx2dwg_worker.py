@@ -3,6 +3,7 @@
 
 import logging
 import os
+import shutil
 import sys
 import time
 
@@ -116,6 +117,13 @@ def convert_one_xlsx(xlsx_path, output_dir, sheets=None, dll_path=None,
             result = _run_one(json_path, effective_dll, sheet_dir,
                               effective_tpl, timeout)
             if result["success"]:
+                # 重命名为中文文件名：绿色建筑设计专篇（{专业}）.dwg
+                src_dwg = result["dwg"]
+                new_name = f"绿色建筑设计专篇（{dir_name}）.dwg"
+                dst_dwg = os.path.join(sheet_dir, new_name)
+                if os.path.isfile(src_dwg) and src_dwg != dst_dwg:
+                    shutil.move(src_dwg, dst_dwg)
+                    result["dwg"] = dst_dwg
                 outputs[dir_name] = result["dwg"]
                 log.info("xlsx2dwg: %s/%s OK (%.1fs)",
                          os.path.basename(xlsx_path), dir_name, result["elapsed"])
