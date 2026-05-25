@@ -17,11 +17,11 @@ _DEFAULT_TEMPLATE = r"C:\opt\ACADxPDF\Template\A1.dwt"
 
 # 序号 → 专业目录名（ZIP 内显示）
 SHEET_INDEX_MAP = {
-    1: "jianzhu",
-    2: "jiegou",
-    3: "geipaishui",
-    4: "nuantong",
-    5: "dianqi",
+    1: "建筑",
+    2: "结构",
+    3: "给排水",
+    4: "暖通",
+    5: "电气",
 }
 
 

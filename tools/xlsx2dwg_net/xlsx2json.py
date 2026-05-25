@@ -77,6 +77,19 @@ def _detect_header_nrows(merges, nrows):
     return max(max_r2 + 1, 1)
 
 
+def _read_cell_alignment(ws, ri, ci, mm):
+    """读取单元格对齐方式 → AutoCAD CellAlignment (1-9)。"""
+    root = mm.get((ri, ci), (ri, ci))
+    c = ws.cell(root[0] + 1, root[1] + 1)
+    h = str(c.alignment.horizontal or '').lower()
+    v = str(c.alignment.vertical or '').lower()
+    h_map = {'left': 0, 'center': 1, 'right': 2}
+    v_map = {'top': 0, 'center': 1, 'bottom': 2}
+    hi = h_map.get(h, 0)
+    vi = v_map.get(v, 1)
+    return vi * 3 + hi + 1  # 1=TopLeft..9=BottomRight
+
+
 def _read_cell_border(ws, ri, ci):
     """读取单元格边框可见性 → 字符串如 'TBLR', 'B', 'TBR' 等"""
     c = ws.cell(ri + 1, ci + 1)
@@ -132,12 +145,17 @@ def analyze_sheet(ws, max_rows=None):
                 break
         row_has_border.append(has)
 
-    # 分段
-    raw_sections = []
+    # 分段（跳过含"绿色建筑设计专篇"的标题行，由 C# 端 MText 单独生成）
+    DATA_START = 0
     if nrows > 0:
-        cur_type = 'mtext' if not row_has_border[0] else 'table'
-        cur_start = 0
-        for ri in range(1, nrows):
+        first_val = str(ws.cell(1, 1).value or '').strip()
+        if '绿色建筑设计专篇' in first_val:
+            DATA_START = 1
+    raw_sections = []
+    if nrows > DATA_START:
+        cur_type = 'mtext' if not row_has_border[DATA_START] else 'table'
+        cur_start = DATA_START
+        for ri in range(DATA_START + 1, nrows):
             rtype = 'mtext' if not row_has_border[ri] else 'table'
             if rtype != cur_type:
                 raw_sections.append({'type': cur_type, 'start': cur_start, 'end': ri - 1})
@@ -171,9 +189,10 @@ def analyze_sheet(ws, max_rows=None):
                     v = cell(ri, ci)
                     brd = _read_cell_border(ws, ri, ci)
                     if v or brd:
+                        align = _read_cell_alignment(ws, ri, ci, mm)
                         cells.append({
                             'row': ri - s, 'col': ci,
-                            'text': v, 'text_height': 0.0, 'alignment': 5,
+                            'text': v, 'text_height': 0.0, 'alignment': align,
                             'borders': brd,
                         })
 

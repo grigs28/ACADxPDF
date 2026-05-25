@@ -8,7 +8,7 @@ run_xlsx2dwg.py — 编排器：xlsx → JSON → C# DLL → accoreconsole → D
 Usage:
     python run_xlsx2dwg.py <xlsx> [output_dir] [--sheet S] [--threads N]
 """
-import os, sys, io, json, hashlib, shutil, subprocess, time, uuid, argparse
+import os, sys, io, json, hashlib, shutil, subprocess, time, tempfile, uuid, argparse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -57,7 +57,7 @@ def _run_one(json_path, dll_path, output_dir, template, timeout=300):
         dict: {'success': bool, 'dwg': str|None, 'elapsed': float, 'error': str}
     """
     uid = uuid.uuid4().hex[:8]
-    work_dir = os.path.join(output_dir, f"_work_{uid}")
+    work_dir = os.path.join(tempfile.gettempdir(), f"xlsx2dwg_work_{uid}")
     os.makedirs(work_dir, exist_ok=True)
 
     # 复制 JSON 到工作目录（ASCII 安全路径）

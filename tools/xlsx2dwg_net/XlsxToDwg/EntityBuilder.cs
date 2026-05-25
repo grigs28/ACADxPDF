@@ -352,6 +352,18 @@ public static class EntityBuilder
             catch { }
         }
 
+        // 预计算每行的 isTextRow（用于相邻行判断）
+        var localIsText = new bool[totalRows];
+        for (int r = 0; r < totalRows; r++)
+        {
+            int sr;
+            if (r < headerNRows)
+                sr = headerStartRow + r;
+            else
+                sr = startRow + (r - headerNRows);
+            localIsText[r] = sr >= 0 && sr < rowIsText.Count && rowIsText[sr];
+        }
+
         // 逐单元格控制边框（+1 offset for Title Row，跳过 row 0）
         for (int r = 0; r < totalRows; r++)
         {
@@ -363,7 +375,7 @@ public static class EntityBuilder
             else
                 srcRow = startRow + (r - headerNRows);
 
-            bool isTextRow = srcRow >= 0 && srcRow < rowIsText.Count && rowIsText[srcRow];
+            bool isTextRow = localIsText[r];
 
             for (int c = 0; c < maxNcols; c++)
             {
@@ -371,9 +383,12 @@ public static class EntityBuilder
                 {
                     if (isTextRow)
                     {
-                        // 文本行：隐藏左、右、底边框，保留顶边框（让上方表格底边可见）
+                        // 文本行：上下边框取决于相邻行是否为表格行
+                        bool aboveIsTable = (r > 0 && !localIsText[r - 1]);
+                        bool belowIsTable = (r + 1 < totalRows && !localIsText[r + 1]);
                         var borders = table.Cells[localRow, c].Borders;
-                        borders.Bottom.IsVisible = false;
+                        borders.Top.IsVisible = aboveIsTable;
+                        borders.Bottom.IsVisible = belowIsTable;
                         borders.Left.IsVisible = false;
                         borders.Right.IsVisible = false;
                     }
@@ -399,6 +414,21 @@ public static class EntityBuilder
                                 borders.Left.IsVisible = false;
                                 borders.Right.IsVisible = false;
                             }
+                        }
+
+                        // 表头下方第一行：上边线始终可见（保证表头底框不丢失）
+                        bool isRightBelowHeader = (headerNRows > 0 && r == headerNRows);
+                        if (isRightBelowHeader)
+                        {
+                            table.Cells[localRow, c].Borders.Top.IsVisible = true;
+                        }
+
+                        // 最后一行且后续还有表格数据：底框始终可见（跨列切分不断线）
+                        bool isLastChunkRow = (r == totalRows - 1);
+                        if (isLastChunkRow
+                            && srcRow + 1 < rowIsText.Count && !rowIsText[srcRow + 1])
+                        {
+                            table.Cells[localRow, c].Borders.Bottom.IsVisible = true;
                         }
                     }
                 }
