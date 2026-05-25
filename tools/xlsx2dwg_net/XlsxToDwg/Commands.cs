@@ -220,7 +220,7 @@ public class Commands
                     var titleSec = new SectionInfo
                     {
                         Type = "mtext",
-                        Text = $"绿色建筑设计专篇（建筑）{cn}",
+                        Text = $"绿色建筑设计专篇（{xlsxDoc.Title}）{cn}",
                         Insert = new List<double> { titleX, titleY, 0.0 },
                         Width = Layout.DRAW_W,
                         TextHeight = Layout.H_TITLE,

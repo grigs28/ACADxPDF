@@ -337,6 +337,7 @@ def extract_to_json(xlsx_path, output_dir=None, sheet_name=None, max_rows=None):
         'col_ws': analysis['col_ws'],
         'ncols': analysis['ncols'],
         'sections': raw,
+        'title': sn,
     }
 
     stem = Path(xlsx_path).stem

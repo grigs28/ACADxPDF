@@ -31,6 +31,9 @@ public class XlsxDocument
 
     [JsonPropertyName("ncols")]
     public int Ncols { get; set; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = "";
 }
 
 /// <summary>
