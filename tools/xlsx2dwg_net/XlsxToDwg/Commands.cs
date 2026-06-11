@@ -217,10 +217,15 @@ public class Commands
                     double titleX = px + Layout.DRAW_LEFT + Layout.DRAW_W / 2;
                     double titleY = Layout.DRAW_TOP - Layout.TITLE_Y_OFFSET;
 
+                    // 标题格式：建筑→绿色建筑设计专篇（一），其他→XX专业绿色建筑设计专篇（一）
+                    string titleText = xlsxDoc.Title == "建筑"
+                        ? $"绿色建筑设计专篇（{cn}）"
+                        : $"{xlsxDoc.Title}专业绿色建筑设计专篇（{cn}）";
+
                     var titleSec = new SectionInfo
                     {
                         Type = "mtext",
-                        Text = $"绿色建筑设计专篇（{xlsxDoc.Title}）{cn}",
+                        Text = titleText,
                         Insert = new List<double> { titleX, titleY, 0.0 },
                         Width = Layout.DRAW_W,
                         TextHeight = Layout.H_TITLE,

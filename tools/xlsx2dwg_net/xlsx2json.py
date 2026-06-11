@@ -145,6 +145,13 @@ def analyze_sheet(ws, max_rows=None):
                 break
         row_has_border.append(has)
 
+    # 检测隐藏行：隐藏行不转换到 DWG，标记为无边框以跳过分段
+    row_hidden = []
+    for ri in range(nrows):
+        rd = ws.row_dimensions.get(ri + 1)
+        hidden = rd.hidden if rd else False
+        row_hidden.append(hidden)
+
     # 分段（跳过含"绿色建筑设计专篇"的标题行，由 C# 端 MText 单独生成）
     DATA_START = 0
     if nrows > 0:
@@ -153,15 +160,21 @@ def analyze_sheet(ws, max_rows=None):
             DATA_START = 1
     raw_sections = []
     if nrows > DATA_START:
-        cur_type = 'mtext' if not row_has_border[DATA_START] else 'table'
+        # 找到第一个非隐藏行
         cur_start = DATA_START
-        for ri in range(DATA_START + 1, nrows):
-            rtype = 'mtext' if not row_has_border[ri] else 'table'
-            if rtype != cur_type:
-                raw_sections.append({'type': cur_type, 'start': cur_start, 'end': ri - 1})
-                cur_type = rtype
-                cur_start = ri
-        raw_sections.append({'type': cur_type, 'start': cur_start, 'end': nrows - 1})
+        while cur_start < nrows and row_hidden[cur_start]:
+            cur_start += 1
+        if cur_start < nrows:
+            cur_type = 'mtext' if not row_has_border[cur_start] else 'table'
+            for ri in range(cur_start + 1, nrows):
+                if row_hidden[ri]:
+                    continue
+                rtype = 'mtext' if not row_has_border[ri] else 'table'
+                if rtype != cur_type:
+                    raw_sections.append({'type': cur_type, 'start': cur_start, 'end': ri - 1})
+                    cur_type = rtype
+                    cur_start = ri
+            raw_sections.append({'type': cur_type, 'start': cur_start, 'end': nrows - 1})
 
     # 列宽
     col_widths_xlsx = []
@@ -180,33 +193,51 @@ def analyze_sheet(ws, max_rows=None):
     raw_sec_list = []
     for sec in raw_sections:
         s, e = sec['start'], sec['end']
-        nrows_sec = e - s + 1
+        nrows_sec = sum(1 for ri in range(s, e + 1) if not row_hidden[ri])
 
         if sec['type'] == 'table':
+
             cells = []
+            vis_row = 0
             for ri in range(s, e + 1):
+                if row_hidden[ri]:
+                    continue
                 for ci in range(ncols):
                     v = cell(ri, ci)
                     brd = _read_cell_border(ws, ri, ci)
                     if v or brd:
                         align = _read_cell_alignment(ws, ri, ci, mm)
                         cells.append({
-                            'row': ri - s, 'col': ci,
+                            'row': vis_row, 'col': ci,
                             'text': v, 'text_height': 0.0, 'alignment': align,
                             'borders': brd,
                         })
+                vis_row += 1
+
+            # 构建 original→visible 行号映射
+            orig_to_vis = {}
+            vr = 0
+            for ri in range(s, e + 1):
+                if not row_hidden[ri]:
+                    orig_to_vis[ri] = vr
+                    vr += 1
 
             merges = []
             for (mr, mc, er, ec) in merge_ranges:
                 if mr > e or er < s:
                     continue
-                local_mr = max(mr - s, 0)
-                local_er = min(er - s, e - s)
-                if local_mr <= local_er:
+                # 跳过涉及隐藏行的合并
+                if any(row_hidden[ri] for ri in range(max(mr, s), min(er, e) + 1)):
+                    continue
+                local_mr = orig_to_vis.get(mr, -1)
+                local_er = orig_to_vis.get(er, -1)
+                if local_mr >= 0 and local_er >= 0 and local_mr <= local_er:
                     merges.append({'r1': local_mr, 'c1': mc, 'r2': local_er, 'c2': ec})
 
             row_hs = []
             for ri in range(s, e + 1):
+                if row_hidden[ri]:
+                    continue
                 dim = ws.row_dimensions[ri + 1]
                 pt = dim.height if dim.height else 15
                 row_hs.append(round(pt * ROW_PT_MM * SCALE, 1))
@@ -253,6 +284,8 @@ def analyze_sheet(ws, max_rows=None):
             # 检查数据行的 col 9 是否有独立内容（排除被左列全行合并覆盖的情况）
             has_right = False
             for ri in range(s, e + 1):
+                if row_hidden[ri]:
+                    continue
                 raw_v = ws.cell(ri + 1, 10).value  # col J 原始值，不经合并查找
                 if raw_v and str(raw_v).strip():
                     has_right = True
@@ -264,6 +297,8 @@ def analyze_sheet(ws, max_rows=None):
             text_ncols = 2 if has_right else 1
 
             for ri in range(s, e + 1):
+                if row_hidden[ri]:
+                    continue
                 lv = cell(ri, 0)  # col A via merge lookup
                 rv = ws.cell(ri + 1, 10).value if has_right else ''  # col J 原始值
                 if rv:
