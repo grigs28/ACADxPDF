@@ -58,6 +58,8 @@ LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", 20 * 1024 * 1024))
 LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", 5))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 4))
 SSO_URL = os.environ.get("SSO_URL", "http://192.168.0.8:80")
+# yz-login 注册应用 ID（管理后台「自建系统」）。from 用 id:<ID> 引用，URL 变更自动跟随。
+SSO_APP_ID = os.environ.get("SSO_APP_ID", "10")
 
 # API Key：首次启动自动生成，写入 .env
 API_KEY = os.environ.get("API_KEY", "")
@@ -136,12 +138,17 @@ def _log_request():
 
 # --- SSO 登录 ---
 
+# yz-login from 参数（三种写法之一，见 docs/yz-login 指南）
+def _sso_from():
+    return f"id:{SSO_APP_ID}" if SSO_APP_ID else f"{request.host_url}callback"
+
+
 @app.route("/callback")
 def sso_callback():
     """SSO ticket 回调：验证 ticket 后跳转回首页。"""
     ticket = request.args.get("ticket")
     if not ticket:
-        return redirect(f"{SSO_URL}/login?from={request.host_url}callback")
+        return redirect(f"{SSO_URL}/login?from={_sso_from()}")
     try:
         resp = http_req.get(f"{SSO_URL}/api/ticket/verify", params={"ticket": ticket}, timeout=10)
         if resp.status_code == 200 and resp.json().get("ok"):
@@ -149,7 +156,7 @@ def sso_callback():
             return redirect("/")
     except Exception:
         pass
-    return redirect(f"{SSO_URL}/login?from={request.host_url}callback")
+    return redirect(f"{SSO_URL}/login?from={_sso_from()}")
 
 
 @app.route("/auth/check")
@@ -161,11 +168,19 @@ def auth_check():
     return jsonify({"ok": False})
 
 
+@app.route("/login")
+def login():
+    """跳转到 yz-login 登录页（from 用 id:<app_id> 引用）。"""
+    return redirect(f"{SSO_URL}/login?from={_sso_from()}")
+
+
 @app.route("/logout")
 def logout():
-    """退出登录。"""
+    """退出登录：清本地 session 后跳 yz-login 登出，登出后跳回本系统。"""
     session.clear()
-    return jsonify({"ok": True})
+    from urllib.parse import quote
+    cb = quote(request.host_url.rstrip("/") + "/", safe="")
+    return redirect(f"{SSO_URL}/logout?from={cb}")
 
 
 # --- API Key 认证（API 调用用） ---

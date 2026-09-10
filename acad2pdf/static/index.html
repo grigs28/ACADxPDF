@@ -607,8 +607,8 @@ window.cleanWork=function(){
   });
 };
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
-window.doLogin=function(){location.href=SSO+'/login?from='+encodeURIComponent(location.origin+'/callback')};
-window.doLogout=function(){fetch(API+'/logout',{credentials:'same-origin'}).then(function(){location.reload()})};
+window.doLogin=function(){location.href=API+'/login'};
+window.doLogout=function(){location.href=API+'/logout'};
 
 // 检查登录状态
 fetch(API+'/auth/check',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){
