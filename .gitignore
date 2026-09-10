@@ -37,3 +37,18 @@ Desktop.ini
 
 # Secrets
 .env
+.session_secret
+.sbot
+
+# Local tooling / editor
+.claude/
+
+# Test artifacts (root-level one-off scripts & bench output)
+/_test_*.py
+/bench32/
+/tools/xlsx2dwg_net/xlsx2json_old.py
+
+# AutoCAD template lock files & backups (tracked intentionally: A1.dwt, mt.dwt)
+Template/*.dwl
+Template/*.dwl2
+Template/*.bak
