@@ -1,9 +1,9 @@
-__version__ = "1.1.0"
+__version__ = "0.6.0+dirty"
 """自动版本管理 — 版本号唯一来源，写回 acad2pdf/_version.py。
 
 规则（git 仓库内）：
     __version__ = MAJOR.MINOR.PATCH  [+dirty]
-    - MAJOR/MINOR/PATCH 取仓库里最新 v* tag（无 tag 则从 1.0.0 起）
+    - MAJOR/MINOR/PATCH 取仓库里最新 v* tag（无 tag 则从 0.5.0 起）
     - 根据最新 tag 之后的 conventional commit 前缀决定升级档位：
         breaking!/BREAKING CHANGE  → MAJOR + 1
         feat                       → MINOR + 1
@@ -49,16 +49,16 @@ def _run_git(*args):
 
 
 def _latest_tag():
-    """取最新 v* 标签 → (major, minor, patch, tag)，无则 (1,0,0,None)。"""
+    """取最新 v* 标签 → (major, minor, patch, tag)，无则 (0,5,0,None)。"""
     out = _run_git("tag", "--list", "v*", "--sort=-v:refname")
     if out is None:
         out = _run_git("tag", "--list", "[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname")
     if not out:
-        return (1, 0, 0, None)
+        return (0, 5, 0, None)
     first = out.splitlines()[0].strip()
     m = _TAG_RE.match(first)
     if not m:
-        return (1, 0, 0, None)
+        return (0, 5, 0, None)
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)), first)
 
 

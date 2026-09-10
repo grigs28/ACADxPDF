@@ -7,7 +7,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-09-10
+## [0.6.0] - 2026-09-10
 
 ### Added
 - 自动版本管理模块 `acad2pdf/_version.py`：从 git tag + conventional commit 推导版本号并固化，作为全局唯一版本来源。
@@ -27,7 +27,7 @@
 - PDF→DWG 卡死、结果丢失 PDF、目录名错误。
 - 版本 dirty 判断排除 `_version.py` 自身，避免自我指涉。
 
-## [1.0.0] - 2026-04-27
+## [0.5.0] - 2026-04-27
 
 ### Added
 - DWG → PDF 批量转换核心引擎（图框检测 + 自动纸张匹配）。
@@ -46,7 +46,7 @@
 __version__ = MAJOR.MINOR.PATCH [+dirty]
 ```
 
-- 取仓库最新 `v*` tag 作为基线（无 tag 则从 `1.0.0` 起）。
+- 取仓库最新 `v*` tag 作为基线（无 tag 则从 `0.5.0` 起）。
 - 根据 tag 之后的 [Conventional Commits](https://www.conventionalcommits.org/) 前缀自动升级：
   - `feat` → **MINOR** 进位
   - `fix` / `chore` / `docs` 等其余 → **PATCH** 进位
