@@ -1,4 +1,4 @@
-__version__ = "1.1.0+dirty"
+__version__ = "1.1.0"
 """自动版本管理 — 版本号唯一来源，写回 acad2pdf/_version.py。
 
 规则（git 仓库内）：
@@ -75,7 +75,13 @@ def _is_dirty():
     out = _run_git("status", "--porcelain")
     if out is None:
         return False
-    return bool(out.strip())
+    for line in out.splitlines():
+        # 忽略版本文件自身（写入版本号会造成自我指涉的脏状态）
+        if "_version.py" in line:
+            continue
+        if line.strip():
+            return True
+    return False
 
 
 def _bump(maj, minr, pat, subjects):
