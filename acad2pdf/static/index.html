@@ -77,6 +77,24 @@ header{
 .atabs .atab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
 .modal .brow{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 
+/* Changelog modal */
+.cl-modal{width:720px;max-width:94vw;max-height:86vh;display:flex;flex-direction:column}
+.cl-body{overflow-y:auto;font-size:13px;line-height:1.7;padding-right:8px}
+.cl-body h1{font-size:18px;color:#fff;margin:4px 0 12px;font-family:var(--sans)}
+.cl-body h2{font-size:15px;color:var(--cyan);margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);font-family:var(--mono)}
+.cl-body h3{font-size:13px;color:var(--text);margin:12px 0 4px}
+.cl-body ul{margin:4px 0 10px;padding-left:22px}
+.cl-body li{margin:2px 0;color:var(--text)}
+.cl-body p{margin:6px 0;color:var(--text2)}
+.cl-body code{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-family:var(--mono);font-size:11px;color:var(--cyan)}
+.cl-body pre{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;overflow-x:auto;margin:8px 0}
+.cl-body pre code{background:none;border:none;padding:0;color:var(--text)}
+.cl-body hr{border:none;border-top:1px solid var(--border);margin:16px 0}
+.cl-body a{color:var(--cyan)}
+.cl-body table{border-collapse:collapse;margin:8px 0;font-size:12px}
+.cl-body th,.cl-body td{border:1px solid var(--border);padding:4px 10px;text-align:left}
+.cl-body th{background:var(--surface2);color:var(--cyan);font-family:var(--mono)}
+
 /* Tabs */
 .tabs{
   display:flex;gap:0;
@@ -256,7 +274,7 @@ header{
       <h1>ACAD<span>x</span>PDF</h1>
     </div>
     <div class="hdr-info">
-      <span class="tag" id="ver" title="版本">v—</span>
+      <span class="tag" id="ver" title="点击查看更新日志" style="cursor:pointer" onclick="showChangelog()">v—</span>
       <span><span class="pulse" id="dot"></span><span id="conn">已连接</span></span>
       <span class="tag">线程: <strong id="wk">4</strong></span>
     </div>
@@ -435,6 +453,17 @@ header{
   </div>
 </div>
 
+<!-- Changelog Modal -->
+<div class="modal-mask" id="clModal" onclick="if(event.target===this)closeChangelog()">
+  <div class="modal cl-modal">
+    <h3>更新日志</h3>
+    <div class="cl-body" id="clBody">加载中…</div>
+    <div class="brow">
+      <button class="btn bs" onclick="closeChangelog()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function switchTab(id){
   document.getElementById('pageD2P').classList.remove('active');
@@ -609,6 +638,48 @@ window.cleanWork=function(){
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 window.doLogin=function(){location.href=API+'/login'};
 window.doLogout=function(){location.href=API+'/logout'};
+
+// --- 更新日志（md 渲染） ---
+function mdRender(md){
+  md=md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  var lines=md.split(/\r?\n/),out=[],inCode=false,inList=false,inTable=false,i,l;
+  function closeBlocks(){if(inList){out.push('</ul>');inList=false}if(inTable){out.push('</table>');inTable=false}}
+  for(i=0;i<lines.length;i++){
+    l=lines[i];
+    if(/^```/.test(l)){if(inCode){out.push('</code></pre>');inCode=false}else{closeBlocks();out.push('<pre><code>');inCode=true}continue}
+    if(inCode){out.push(l);continue}
+    if(/^\s*$/.test(l)){closeBlocks();continue}
+    if(/^---+\s*$/.test(l)){closeBlocks();out.push('<hr>');continue}
+    var m;
+    if(m=l.match(/^(#{1,6})\s+(.*)/)){closeBlocks();var lv=m[1].length;out.push('<h'+lv+'>'+mdInline(m[2])+'</h'+lv+'>');continue}
+    if(/^\|.*\|\s*$/.test(l)){
+      // 分隔行 |---|---| → 跳过（仅含 - : | 和空白）
+      if(/^\|[\s:\-|]+\|\s*$/.test(l))continue;
+      var cells=l.replace(/^\|/,'').replace(/\|\s*$/,'').split('|').map(function(c){return c.trim()});
+      var isHead=!inTable;
+      if(!inTable){inTable=true;out.push('<table>')}
+      out.push('<tr>'+cells.map(function(c){return '<'+(isHead?'th':'td')+'>'+mdInline(c)+'</'+(isHead?'th':'td')+'>'}).join('')+'</tr>');
+      continue;
+    }
+    if(m=l.match(/^\s*[-*+]\s+(.*)/)){if(inTable){out.push('</table>');inTable=false}if(!inList){inList=true;out.push('<ul>')}out.push('<li>'+mdInline(m[1])+'</li>');continue}
+    closeBlocks();out.push('<p>'+mdInline(l)+'</p>');
+  }
+  closeBlocks();if(inCode)out.push('</code></pre>');
+  return out.join('\n');
+}
+function mdInline(t){
+  return t.replace(/`([^`]+)`/g,'<code>$1</code>')
+          .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+          .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+window.showChangelog=function(){
+  $('clModal').classList.add('show');
+  var b=$('clBody');if(b.dataset.loaded)return;
+  fetch(API+'/changelog').then(function(r){return r.text()}).then(function(t){
+    b.innerHTML=mdRender(t);b.dataset.loaded='1';
+  }).catch(function(){b.textContent='加载失败'});
+};
+window.closeChangelog=function(){$('clModal').classList.remove('show')};
 
 // 检查登录状态
 fetch(API+'/auth/check',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){

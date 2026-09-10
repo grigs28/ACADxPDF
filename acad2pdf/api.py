@@ -625,6 +625,16 @@ def health():
     return jsonify({"status": "ok", "workers": runtime_config["max_workers"], "version": __version__})
 
 
+@app.route("/changelog", methods=["GET"])
+def changelog():
+    """返回仓库根目录 CHANGELOG.md 原始内容（Web UI 版本号点击查看）。"""
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "CHANGELOG.md")
+    if not os.path.exists(path):
+        return jsonify({"error": "CHANGELOG.md not found"}), 404
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return Response(f.read(), mimetype="text/plain; charset=utf-8")
+
+
 def _maintenance_loop():
     while True:
         time.sleep(300)
