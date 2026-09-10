@@ -1,4 +1,4 @@
-__version__ = "0.6.0+dirty"
+__version__ = "0.7.0"
 """自动版本管理 — 版本号唯一来源，写回 acad2pdf/_version.py。
 
 规则（git 仓库内）：
