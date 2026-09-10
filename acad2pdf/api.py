@@ -39,6 +39,7 @@ from .converter import (
     WORK_DIR,
 )
 from .task_store import store
+from ._version import __version__
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -181,7 +182,7 @@ def _check_api_key():
 
 @app.route("/")
 def index():
-    return jsonify({"status": "ok", "message": "ACADxPDF API"})
+    return jsonify({"status": "ok", "message": "ACADxPDF API", "version": __version__})
 
 
 @app.route("/stream")
@@ -606,7 +607,7 @@ def get_logs():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "workers": runtime_config["max_workers"]})
+    return jsonify({"status": "ok", "workers": runtime_config["max_workers"], "version": __version__})
 
 
 def _maintenance_loop():

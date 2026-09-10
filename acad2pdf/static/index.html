@@ -256,6 +256,7 @@ header{
       <h1>ACAD<span>x</span>PDF</h1>
     </div>
     <div class="hdr-info">
+      <span class="tag" id="ver" title="版本">v—</span>
       <span><span class="pulse" id="dot"></span><span id="conn">已连接</span></span>
       <span class="tag">线程: <strong id="wk">4</strong></span>
     </div>
@@ -869,6 +870,7 @@ function toast(m){
 }
 
 sse();loadCfg();loadLogs();setInterval(loadLogs,8000);
+fetch(API+'/health').then(function(r){return r.json()}).then(function(d){if(d.version)$('ver').textContent='v'+d.version;}).catch(function(){});
 })();
 </script>
 </body>
